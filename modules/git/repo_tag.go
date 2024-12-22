@@ -112,6 +112,8 @@ func (repo *Repository) GetTagWithID(idStr, name string) (*Tag, error) {
 
 // GetTagInfos returns all tag infos of the repository.
 func (repo *Repository) GetTagInfos(page, pageSize int) ([]*Tag, int, error) {
+	ctx, span := tracer.Start(repo.Ctx, "GetTagInfos")
+	defer span.End()
 	// Generally, refname:short should be equal to refname:lstrip=2 except core.warnAmbiguousRefs is used to select the strict abbreviation mode.
 	// https://git-scm.com/docs/git-for-each-ref#Documentation/git-for-each-ref.txt-refname
 	forEachRefFmt := foreachref.NewFormat("objecttype", "refname:lstrip=2", "object", "objectname", "creator", "contents", "contents:signature")
@@ -123,7 +125,7 @@ func (repo *Repository) GetTagInfos(page, pageSize int) ([]*Tag, int, error) {
 	rc := &RunOpts{Dir: repo.Path, Stdout: stdoutWriter, Stderr: &stderr}
 
 	go func() {
-		err := NewCommand(repo.Ctx, "for-each-ref").
+		err := NewCommand(ctx, "for-each-ref").
 			AddOptionFormat("--format=%s", forEachRefFmt.Flag()).
 			AddArguments("--sort", "-*creatordate", "refs/tags").Run(rc)
 		if err != nil {

@@ -52,6 +52,8 @@ func ToArchiveType(s string) ArchiveType {
 
 // CreateArchive create archive content to the target path
 func (repo *Repository) CreateArchive(ctx context.Context, format ArchiveType, target io.Writer, usePrefix bool, commitID string) error {
+	ctx, span := tracer.Start(ctx, "CreateArchive")
+	defer span.End()
 	if format.String() == "unknown" {
 		return fmt.Errorf("unknown format: %v", format)
 	}

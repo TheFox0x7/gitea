@@ -28,6 +28,8 @@ type WriteCloserError interface {
 // Run before opening git cat-file.
 // This is needed otherwise the git cat-file will hang for invalid repositories.
 func ensureValidGitRepository(ctx context.Context, repoPath string) error {
+	ctx, span := tracer.Start(ctx, "EnsureValidGitRepository")
+	defer span.End()
 	stderr := strings.Builder{}
 	err := NewCommand(ctx, "rev-parse").
 		Run(&RunOpts{
@@ -42,6 +44,8 @@ func ensureValidGitRepository(ctx context.Context, repoPath string) error {
 
 // catFileBatchCheck opens git cat-file --batch-check in the provided repo and returns a stdin pipe, a stdout reader and cancel function
 func catFileBatchCheck(ctx context.Context, repoPath string) (WriteCloserError, *bufio.Reader, func()) {
+	ctx, span := tracer.Start(ctx, "CatFileBatchCheck")
+	defer span.End()
 	batchStdinReader, batchStdinWriter := io.Pipe()
 	batchStdoutReader, batchStdoutWriter := io.Pipe()
 	ctx, ctxCancel := context.WithCancel(ctx)
@@ -90,6 +94,8 @@ func catFileBatchCheck(ctx context.Context, repoPath string) (WriteCloserError, 
 func catFileBatch(ctx context.Context, repoPath string) (WriteCloserError, *bufio.Reader, func()) {
 	// We often want to feed the commits in order into cat-file --batch, followed by their trees and sub trees as necessary.
 	// so let's create a batch stdin and stdout
+	ctx, span := tracer.Start(ctx, "CatFileBatch")
+	defer span.End()
 	batchStdinReader, batchStdinWriter := io.Pipe()
 	batchStdoutReader, batchStdoutWriter := nio.Pipe(buffer.New(32 * 1024))
 	ctx, ctxCancel := context.WithCancel(ctx)

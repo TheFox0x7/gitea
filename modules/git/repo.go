@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"code.gitea.io/gitea/modules/proxy"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // GPGSettings represents the default GPG settings for this repository
@@ -86,8 +87,10 @@ func InitRepository(ctx context.Context, repoPath string, bare bool, objectForma
 
 // IsEmpty Check if repository is empty.
 func (repo *Repository) IsEmpty() (bool, error) {
+	ctx, span := tracer.Start(repo.Ctx, "GetCodeActivityStats")
+	defer span.End()
 	var errbuf, output strings.Builder
-	if err := NewCommand(repo.Ctx).AddOptionFormat("--git-dir=%s", repo.Path).AddArguments("rev-list", "-n", "1", "--all").
+	if err := NewCommand(ctx).AddOptionFormat("--git-dir=%s", repo.Path).AddArguments("rev-list", "-n", "1", "--all").
 		Run(&RunOpts{
 			Dir:    repo.Path,
 			Stdout: &output,
@@ -124,6 +127,8 @@ func Clone(ctx context.Context, from, to string, opts CloneRepoOptions) error {
 
 // CloneWithArgs original repository to target path.
 func CloneWithArgs(ctx context.Context, args TrustedCmdArgs, from, to string, opts CloneRepoOptions) (err error) {
+	ctx, span := tracer.Start(ctx, "GetCodeActivityStats")
+	defer span.End()
 	toDir := path.Dir(to)
 	if err = os.MkdirAll(toDir, os.ModePerm); err != nil {
 		return err
@@ -193,6 +198,8 @@ type PushOptions struct {
 
 // Push pushs local commits to given remote branch.
 func Push(ctx context.Context, repoPath string, opts PushOptions) error {
+	ctx, span := tracer.Start(ctx, "GetCommitFileRenames")
+	defer span.End()
 	cmd := NewCommand(ctx, "push")
 	if opts.Force {
 		cmd.AddArguments("-f")
@@ -208,6 +215,7 @@ func Push(ctx context.Context, repoPath string, opts PushOptions) error {
 
 	stdout, stderr, err := cmd.RunStdString(&RunOpts{Env: opts.Env, Timeout: opts.Timeout, Dir: repoPath})
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		if strings.Contains(stderr, "non-fast-forward") {
 			return &ErrPushOutOfDate{StdOut: stdout, StdErr: stderr, Err: err}
 		} else if strings.Contains(stderr, "! [remote rejected]") || strings.Contains(stderr, "! [rejected]") {

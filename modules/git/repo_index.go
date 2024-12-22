@@ -104,11 +104,13 @@ func (repo *Repository) LsFiles(filenames ...string) ([]string, error) {
 
 // RemoveFilesFromIndex removes given filenames from the index - it does not check whether they are present.
 func (repo *Repository) RemoveFilesFromIndex(filenames ...string) error {
+	ctx, span := tracer.Start(repo.Ctx, "GetCodeActivityStats")
+	defer span.End()
 	objectFormat, err := repo.GetObjectFormat()
 	if err != nil {
 		return err
 	}
-	cmd := NewCommand(repo.Ctx, "update-index", "--remove", "-z", "--index-info")
+	cmd := NewCommand(ctx, "update-index", "--remove", "-z", "--index-info")
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	buffer := new(bytes.Buffer)

@@ -140,6 +140,8 @@ func (l *lineCountWriter) Write(p []byte) (n int, err error) {
 // GetDiffNumChangedFiles counts the number of changed files
 // This is substantially quicker than shortstat but...
 func (repo *Repository) GetDiffNumChangedFiles(base, head string, directComparison bool) (int, error) {
+	ctx, span := tracer.Start(repo.Ctx, "GetDiffNumChangedFiles")
+	defer span.End()
 	// Now there is git diff --shortstat but this appears to be slower than simply iterating with --nameonly
 	w := &lineCountWriter{}
 	stderr := new(bytes.Buffer)
@@ -150,7 +152,7 @@ func (repo *Repository) GetDiffNumChangedFiles(base, head string, directComparis
 	}
 
 	// avoid: ambiguous argument 'refs/a...refs/b': unknown revision or path not in the working tree. Use '--': 'git <command> [<revision>...] -- [<file>...]'
-	if err := NewCommand(repo.Ctx, "diff", "-z", "--name-only").AddDynamicArguments(base + separator + head).AddArguments("--").
+	if err := NewCommand(ctx, "diff", "-z", "--name-only").AddDynamicArguments(base + separator + head).AddArguments("--").
 		Run(&RunOpts{
 			Dir:    repo.Path,
 			Stdout: w,
@@ -161,7 +163,7 @@ func (repo *Repository) GetDiffNumChangedFiles(base, head string, directComparis
 			// previously it would return the results of git diff -z --name-only base head so let's try that...
 			w = &lineCountWriter{}
 			stderr.Reset()
-			if err = NewCommand(repo.Ctx, "diff", "-z", "--name-only").AddDynamicArguments(base, head).AddArguments("--").Run(&RunOpts{
+			if err = NewCommand(ctx, "diff", "-z", "--name-only").AddDynamicArguments(base, head).AddArguments("--").Run(&RunOpts{
 				Dir:    repo.Path,
 				Stdout: w,
 				Stderr: stderr,
@@ -235,8 +237,10 @@ func parseDiffStat(stdout string) (numFiles, totalAdditions, totalDeletions int,
 
 // GetDiff generates and returns patch data between given revisions, optimized for human readability
 func (repo *Repository) GetDiff(compareArg string, w io.Writer) error {
+	ctx, span := tracer.Start(repo.Ctx, "GetDiff")
+	defer span.End()
 	stderr := new(bytes.Buffer)
-	return NewCommand(repo.Ctx, "diff", "-p").AddDynamicArguments(compareArg).
+	return NewCommand(ctx, "diff", "-p").AddDynamicArguments(compareArg).
 		Run(&RunOpts{
 			Dir:    repo.Path,
 			Stdout: w,
@@ -246,7 +250,9 @@ func (repo *Repository) GetDiff(compareArg string, w io.Writer) error {
 
 // GetDiffBinary generates and returns patch data between given revisions, including binary diffs.
 func (repo *Repository) GetDiffBinary(compareArg string, w io.Writer) error {
-	return NewCommand(repo.Ctx, "diff", "-p", "--binary", "--histogram").AddDynamicArguments(compareArg).Run(&RunOpts{
+	ctx, span := tracer.Start(repo.Ctx, "GetDiffBinary")
+	defer span.End()
+	return NewCommand(ctx, "diff", "-p", "--binary", "--histogram").AddDynamicArguments(compareArg).Run(&RunOpts{
 		Dir:    repo.Path,
 		Stdout: w,
 	})
@@ -254,8 +260,10 @@ func (repo *Repository) GetDiffBinary(compareArg string, w io.Writer) error {
 
 // GetPatch generates and returns format-patch data between given revisions, able to be used with `git apply`
 func (repo *Repository) GetPatch(compareArg string, w io.Writer) error {
+	ctx, span := tracer.Start(repo.Ctx, "GetPatch")
+	defer span.End()
 	stderr := new(bytes.Buffer)
-	return NewCommand(repo.Ctx, "format-patch", "--binary", "--stdout").AddDynamicArguments(compareArg).
+	return NewCommand(ctx, "format-patch", "--binary", "--stdout").AddDynamicArguments(compareArg).
 		Run(&RunOpts{
 			Dir:    repo.Path,
 			Stdout: w,

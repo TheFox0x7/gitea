@@ -33,6 +33,8 @@ type GrepOptions struct {
 }
 
 func GrepSearch(ctx context.Context, repo *Repository, search string, opts GrepOptions) ([]*GrepResult, error) {
+	ctx, span := tracer.Start(ctx, "GrepSearch")
+	defer span.End()
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("unable to create os pipe to grep: %w", err)
