@@ -17,6 +17,7 @@ import (
 
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
+	"go.opentelemetry.io/otel"
 
 	"github.com/hashicorp/go-version"
 )
@@ -36,6 +37,7 @@ var (
 	GitExecutable   = "git"         // the command name of git, will be updated to an absolute path during initialization
 	DefaultContext  context.Context // the default context to run git commands in, must be initialized by git.InitXxx
 	defaultFeatures *Features
+	tracer          = otel.Tracer("code.gitea.io/gitea/modules/git")
 )
 
 func (f *Features) CheckVersionAtLeast(atLeast string) bool {

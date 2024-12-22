@@ -18,6 +18,7 @@ import (
 	"gitea.com/go-chi/session"
 	"github.com/chi-middleware/proxy"
 	"github.com/go-chi/chi/v5"
+	"github.com/riandyrn/otelchi"
 )
 
 // ProtocolMiddlewares returns HTTP protocol related middlewares, and it provides a global panic recovery
@@ -37,6 +38,7 @@ func ProtocolMiddlewares() (handlers []any) {
 	if setting.IsAccessLogEnabled() {
 		handlers = append(handlers, context.AccessLogger())
 	}
+	handlers = append(handlers, otelchi.Middleware("gitea"))
 
 	return handlers
 }

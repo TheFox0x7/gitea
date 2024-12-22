@@ -8,22 +8,34 @@ import (
 	"time"
 
 	"code.gitea.io/gitea/modules/log"
+	"go.opentelemetry.io/otel"
+	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"xorm.io/xorm/contexts"
 )
 
-type SlowQueryHook struct {
+var tracer = otel.Tracer("code.gitea.io/gitea/models/db")
+
+type EngineHook struct {
 	Threshold time.Duration
 	Logger    log.Logger
 }
 
-var _ contexts.Hook = (*SlowQueryHook)(nil)
+var _ contexts.Hook = (*EngineHook)(nil)
 
-func (*SlowQueryHook) BeforeProcess(c *contexts.ContextHook) (context.Context, error) {
-	return c.Ctx, nil
+func (*EngineHook) BeforeProcess(c *contexts.ContextHook) (context.Context, error) {
+	ctx, _ := tracer.Start(c.Ctx, "database_query", trace.WithAttributes(semconv.DBQueryText(c.SQL)))
+
+	return ctx, nil
 }
 
-func (h *SlowQueryHook) AfterProcess(c *contexts.ContextHook) error {
+func (h *EngineHook) AfterProcess(c *contexts.ContextHook) error {
+	span := trace.SpanFromContext(c.Ctx)
+	if c.Err != nil {
+		span.RecordError(c.Err)
+	}
+	span.End()
 	if c.ExecuteTime >= h.Threshold {
 		// 8 is the amount of skips passed to runtime.Caller, so that in the log the correct function
 		// is being displayed (the function that ultimately wants to execute the query in the code)

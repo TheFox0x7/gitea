@@ -21,6 +21,9 @@ import (
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/process"
 	"code.gitea.io/gitea/modules/util"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // TrustedCmdArgs returns the trusted arguments for git command.
@@ -281,6 +284,12 @@ func (c *Command) Run(opts *RunOpts) error {
 }
 
 func (c *Command) run(skip int, opts *RunOpts) error {
+
+	_, span := tracer.Start(c.parentContext, c.args[c.globalArgsLength], trace.WithAttributes(
+		semconv.ProcessCommand(c.prog), semconv.ProcessCommandArgs(c.args...),
+	), trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+
 	if len(c.brokenArgs) != 0 {
 		log.Error("git command is broken: %s, broken args: %s", c.LogString(), strings.Join(c.brokenArgs, " "))
 		return ErrBrokenCommand
@@ -288,6 +297,8 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 	if opts == nil {
 		opts = &RunOpts{}
 	}
+
+	span.SetAttributes(attribute.String("repo_path", opts.Dir))
 
 	// We must not change the provided options
 	timeout := opts.Timeout
@@ -300,6 +311,7 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 	if pos := strings.LastIndex(callerInfo, "/"); pos >= 0 {
 		callerInfo = callerInfo[pos+1:]
 	}
+	span.SetName(callerInfo)
 	// these logs are for debugging purposes only, so no guarantee of correctness or stability
 	desc = fmt.Sprintf("git.Run(by:%s, repo:%s): %s", callerInfo, logArgSanitize(opts.Dir), c.LogString())
 	log.Debug("git.Command: %s", desc)
@@ -331,6 +343,7 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 	cmd.Stderr = opts.Stderr
 	cmd.Stdin = opts.Stdin
 	if err := cmd.Start(); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
@@ -339,6 +352,7 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 		if err != nil {
 			cancel()
 			_ = cmd.Wait()
+			span.RecordError(err)
 			return err
 		}
 	}
@@ -361,6 +375,7 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 	}
 
 	if err != nil && ctx.Err() != context.DeadlineExceeded {
+		span.RecordError(err)
 		return err
 	}
 
