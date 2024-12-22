@@ -16,6 +16,7 @@ import (
 
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/util"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Commit represents a git commit.
@@ -432,6 +433,8 @@ func parseCommitFileStatus(fileStatus *CommitFileStatus, stdout io.Reader) {
 
 // GetCommitFileStatus returns file status of commit in given repository.
 func GetCommitFileStatus(ctx context.Context, repoPath, commitID string) (*CommitFileStatus, error) {
+	ctx, span := tracer.Start(ctx, "GetCommitFileStatus")
+	defer span.End()
 	stdout, w := io.Pipe()
 	done := make(chan struct{})
 	fileStatus := NewCommitFileStatus()
@@ -448,6 +451,7 @@ func GetCommitFileStatus(ctx context.Context, repoPath, commitID string) (*Commi
 	})
 	w.Close() // Close writer to exit parsing goroutine
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, ConcatenateError(err, stderr.String())
 	}
 

@@ -21,6 +21,8 @@ import (
 
 // LogNameStatusRepo opens git log --raw in the provided repo and returns a stdin pipe, a stdout reader and cancel function
 func LogNameStatusRepo(ctx context.Context, repository, head, treepath string, paths ...string) (*bufio.Reader, func()) {
+	ctx, span := tracer.Start(ctx, "LogNameStatusRepo")
+	defer span.End()
 	// We often want to feed the commits in order into cat-file --batch, followed by their trees and sub trees as necessary.
 	// so let's create a batch stdin and stdout
 	stdoutReader, stdoutWriter := nio.Pipe(buffer.New(32 * 1024))

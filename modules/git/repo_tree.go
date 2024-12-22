@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
 )
 
 // CommitTreeOpts represents the possible options to CommitTree
@@ -22,6 +24,8 @@ type CommitTreeOpts struct {
 
 // CommitTree creates a commit from a given tree id for the user with provided message
 func (repo *Repository) CommitTree(author, committer *Signature, tree *Tree, opts CommitTreeOpts) (ObjectID, error) {
+	ctx, span := tracer.Start(repo.Ctx, "CommitTree")
+	defer span.End()
 	commitTimeStr := time.Now().Format(time.RFC3339)
 
 	// Because this may call hooks we should pass in the environment
@@ -33,7 +37,7 @@ func (repo *Repository) CommitTree(author, committer *Signature, tree *Tree, opt
 		"GIT_COMMITTER_EMAIL="+committer.Email,
 		"GIT_COMMITTER_DATE="+commitTimeStr,
 	)
-	cmd := NewCommand(repo.Ctx, "commit-tree").AddDynamicArguments(tree.ID.String())
+	cmd := NewCommand(ctx, "commit-tree").AddDynamicArguments(tree.ID.String())
 
 	for _, parent := range opts.Parents {
 		cmd.AddArguments("-p").AddDynamicArguments(parent)
@@ -61,6 +65,7 @@ func (repo *Repository) CommitTree(author, committer *Signature, tree *Tree, opt
 		Stderr: stderr,
 	})
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, ConcatenateError(err, stderr.String())
 	}
 	return NewIDFromString(strings.TrimSpace(stdout.String()))

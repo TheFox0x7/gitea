@@ -14,6 +14,8 @@ import (
 // GetRefsFiltered returns all references of the repository that matches patterm exactly or starting with.
 func (repo *Repository) GetRefsFiltered(pattern string) ([]*Reference, error) {
 	stdoutReader, stdoutWriter := io.Pipe()
+	ctx, span := tracer.Start(repo.Ctx, "GetCodeActivityStats")
+	defer span.End()
 	defer func() {
 		_ = stdoutReader.Close()
 		_ = stdoutWriter.Close()
@@ -21,7 +23,7 @@ func (repo *Repository) GetRefsFiltered(pattern string) ([]*Reference, error) {
 
 	go func() {
 		stderrBuilder := &strings.Builder{}
-		err := NewCommand(repo.Ctx, "for-each-ref").Run(&RunOpts{
+		err := NewCommand(ctx, "for-each-ref").Run(&RunOpts{
 			Dir:    repo.Path,
 			Stdout: stdoutWriter,
 			Stderr: stderrBuilder,

@@ -130,6 +130,8 @@ func (r *BlameReader) Close() error {
 
 // CreateBlameReader creates reader for given repository, commit and file
 func CreateBlameReader(ctx context.Context, objectFormat ObjectFormat, repoPath string, commit *Commit, file string, bypassBlameIgnore bool) (*BlameReader, error) {
+	ctx, span := tracer.Start(ctx, "CreateBlameReader")
+	defer span.End()
 	var ignoreRevsFile *string
 	if DefaultFeatures().CheckVersionAtLeast("2.23") && !bypassBlameIgnore {
 		ignoreRevsFile = tryCreateBlameIgnoreRevsFile(commit)

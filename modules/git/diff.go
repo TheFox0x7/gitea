@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"code.gitea.io/gitea/modules/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RawDiffType type of a raw diff.
@@ -33,6 +35,8 @@ func GetRawDiff(repo *Repository, commitID string, diffType RawDiffType, writer 
 
 // GetReverseRawDiff dumps the reverse diff results of repository in given commit ID to io.Writer.
 func GetReverseRawDiff(ctx context.Context, repoPath, commitID string, writer io.Writer) error {
+	ctx, span := tracer.Start(ctx, "GetReverseRawDiff")
+	defer span.End()
 	stderr := new(bytes.Buffer)
 	cmd := NewCommand(ctx, "show", "--pretty=format:revert %H%n", "-R").AddDynamicArguments(commitID)
 	if err := cmd.Run(&RunOpts{
@@ -47,6 +51,8 @@ func GetReverseRawDiff(ctx context.Context, repoPath, commitID string, writer io
 
 // GetRepoRawDiffForFile dumps diff results of file in given commit ID to io.Writer according given repository
 func GetRepoRawDiffForFile(repo *Repository, startCommit, endCommit string, diffType RawDiffType, file string, writer io.Writer) error {
+	ctx, span := tracer.Start(repo.Ctx, "git diff", trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
 	commit, err := repo.GetCommit(endCommit)
 	if err != nil {
 		return err
@@ -56,7 +62,7 @@ func GetRepoRawDiffForFile(repo *Repository, startCommit, endCommit string, diff
 		files = append(files, file)
 	}
 
-	cmd := NewCommand(repo.Ctx)
+	cmd := NewCommand(ctx)
 	switch diffType {
 	case RawDiffNormal:
 		if len(startCommit) != 0 {
@@ -82,6 +88,7 @@ func GetRepoRawDiffForFile(repo *Repository, startCommit, endCommit string, diff
 		return fmt.Errorf("invalid diffType: %s", diffType)
 	}
 
+	span.AddEvent("running git diff", trace.WithAttributes(attribute.String("cmd", cmd.LogString())))
 	stderr := new(bytes.Buffer)
 	if err = cmd.Run(&RunOpts{
 		Dir:    repo.Path,
@@ -94,7 +101,7 @@ func GetRepoRawDiffForFile(repo *Repository, startCommit, endCommit string, diff
 }
 
 // ParseDiffHunkString parse the diffhunk content and return
-func ParseDiffHunkString(diffhunk string) (leftLine, leftHunk, rightLine, righHunk int) {
+func ParseDiffHunkString(diffhunk string) (leftLine, leftHunk, rightLine, rightHunk int) {
 	ss := strings.Split(diffhunk, "@@")
 	ranges := strings.Split(ss[1][1:], " ")
 	leftRange := strings.Split(ranges[0], ",")
@@ -106,14 +113,14 @@ func ParseDiffHunkString(diffhunk string) (leftLine, leftHunk, rightLine, righHu
 		rightRange := strings.Split(ranges[1], ",")
 		rightLine, _ = strconv.Atoi(rightRange[0])
 		if len(rightRange) > 1 {
-			righHunk, _ = strconv.Atoi(rightRange[1])
+			rightHunk, _ = strconv.Atoi(rightRange[1])
 		}
 	} else {
 		log.Debug("Parse line number failed: %v", diffhunk)
 		rightLine = leftLine
-		righHunk = leftHunk
+		rightHunk = leftHunk
 	}
-	return leftLine, leftHunk, rightLine, righHunk
+	return leftLine, leftHunk, rightLine, rightHunk
 }
 
 // Example: @@ -1,8 +1,9 @@ => [..., 1, 8, 1, 9]
@@ -272,6 +279,8 @@ func CutDiffAroundLine(originalDiff io.Reader, line int64, old bool, numbersOfLi
 
 // GetAffectedFiles returns the affected files between two commits
 func GetAffectedFiles(repo *Repository, branchName, oldCommitID, newCommitID string, env []string) ([]string, error) {
+	ctx, span := tracer.Start(repo.Ctx, "GetAffectedFiles")
+	defer span.End()
 	if oldCommitID == emptySha1ObjectID.String() || oldCommitID == emptySha256ObjectID.String() {
 		startCommitID, err := repo.GetCommitBranchStart(env, branchName, newCommitID)
 		if err != nil {
@@ -295,7 +304,7 @@ func GetAffectedFiles(repo *Repository, branchName, oldCommitID, newCommitID str
 	affectedFiles := make([]string, 0, 32)
 
 	// Run `git diff --name-only` to get the names of the changed files
-	err = NewCommand(repo.Ctx, "diff", "--name-only").AddDynamicArguments(oldCommitID, newCommitID).
+	err = NewCommand(ctx, "diff", "--name-only").AddDynamicArguments(oldCommitID, newCommitID).
 		Run(&RunOpts{
 			Env:    env,
 			Dir:    repo.Path,

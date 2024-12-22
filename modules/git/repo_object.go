@@ -66,11 +66,13 @@ func (repo *Repository) HashObject(reader io.Reader) (ObjectID, error) {
 }
 
 func (repo *Repository) hashObject(reader io.Reader, save bool) (string, error) {
+	ctx, span := tracer.Start(repo.Ctx, "hashObject")
+	defer span.End()
 	var cmd *Command
 	if save {
-		cmd = NewCommand(repo.Ctx, "hash-object", "-w", "--stdin")
+		cmd = NewCommand(ctx, "hash-object", "-w", "--stdin")
 	} else {
-		cmd = NewCommand(repo.Ctx, "hash-object", "--stdin")
+		cmd = NewCommand(ctx, "hash-object", "--stdin")
 	}
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
