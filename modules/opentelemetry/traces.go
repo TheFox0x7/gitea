@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 
 	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/tailmsg"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -80,13 +81,13 @@ func setupTraceProvider(ctx context.Context, r *resource.Resource) (func(context
 	var shutdown func(context.Context) error
 	switch setting.OpenTelemetry.Traces {
 	case "otlp":
-		traceExporter, err := exporter[setting.OpenTelemetry.OtelTraces.Protocol](ctx)
-		if err != nil {
-			return nil, err
-		}
+		// traceExporter, err := exporter[setting.OpenTelemetry.OtelTraces.Protocol](ctx)
+		// if err != nil {
+		// 	return nil, err
+		// }
 		traceProvider := sdktrace.NewTracerProvider(
 			sdktrace.WithSampler(setting.OpenTelemetry.Sampler),
-			sdktrace.WithBatcher(traceExporter),
+			sdktrace.WithBatcher(tailmsg.GetManager().GetTraceRecorder()),
 			sdktrace.WithResource(r),
 		)
 		otel.SetTracerProvider(traceProvider)
