@@ -251,6 +251,10 @@ func commonBaseEnvs() []string {
 			envs = append(envs, key+"="+val)
 		}
 	}
+	// Passthrough XDG_CONFIG_HOME for git only if it is in defined HOME to prevent accidental overwrites
+	if val, ok := os.LookupEnv("XDG_CONFIG_HOME"); ok && !strings.Contains(val, HomeDir()) {
+		envs = append(envs, "XDG_CONFIG_HOME=")
+	}
 	return envs
 }
 
