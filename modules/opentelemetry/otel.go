@@ -45,6 +45,13 @@ func Init(ctx context.Context) error {
 		shutdownFuncs = append(shutdownFuncs, traceShutdown)
 	}
 
+	metricShutdown, err := setupMetricProvider(ctx, res)
+	if err != nil {
+		log.Warn("OpenTelemetry metrics setup failed, err=%s", err)
+	} else {
+		shutdownFuncs = append(shutdownFuncs, metricShutdown)
+	}
+
 	graceful.GetManager().RunAtShutdown(ctx, func() {
 		for _, fn := range shutdownFuncs {
 			if err := fn(shutdownCtx); err != nil {

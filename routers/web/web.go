@@ -12,7 +12,6 @@ import (
 	"code.gitea.io/gitea/models/perm"
 	"code.gitea.io/gitea/models/unit"
 	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/metrics"
 	"code.gitea.io/gitea/modules/public"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/storage"
@@ -50,7 +49,6 @@ import (
 	chi_middleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/klauspost/compress/gzhttp"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var GzipMinSize = 1400 // min size to compress for the body size of response
@@ -257,7 +255,6 @@ func Routes() *web.Router {
 	}
 
 	if setting.Metrics.Enabled {
-		prometheus.MustRegister(metrics.NewCollector())
 		routes.Get("/metrics", append(mid, Metrics)...)
 	}
 

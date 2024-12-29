@@ -14,11 +14,13 @@ import (
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/web/routing"
 	"code.gitea.io/gitea/services/context"
+	"go.opentelemetry.io/otel"
 
 	"gitea.com/go-chi/session"
 	"github.com/chi-middleware/proxy"
 	"github.com/go-chi/chi/v5"
 	"github.com/riandyrn/otelchi"
+	otelchimetric "github.com/riandyrn/otelchi/metric"
 )
 
 // ProtocolMiddlewares returns HTTP protocol related middlewares, and it provides a global panic recovery
@@ -38,8 +40,13 @@ func ProtocolMiddlewares() (handlers []any) {
 	if setting.IsAccessLogEnabled() {
 		handlers = append(handlers, context.AccessLogger())
 	}
+
 	if setting.IsOpenTelemetryEnabled() {
 		handlers = append(handlers, otelchi.Middleware("gitea"))
+	}
+	if setting.Metrics.Enabled {
+		basecfg := otelchimetric.NewBaseConfig(setting.AppName, otelchimetric.WithMeterProvider(otel.GetMeterProvider()))
+		handlers = append(handlers, otelchimetric.NewRequestDurationMillis(basecfg), otelchimetric.NewRequestInFlight(basecfg), otelchimetric.NewResponseSizeBytes(basecfg))
 	}
 
 	return handlers
