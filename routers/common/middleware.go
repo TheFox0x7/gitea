@@ -15,11 +15,15 @@ import (
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/web/routing"
 	"code.gitea.io/gitea/services/context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"gitea.com/go-chi/session"
 	"github.com/chi-middleware/proxy"
 	"github.com/go-chi/chi/v5"
 )
+
+var tracer = otel.Tracer("code.gitea.io/gitea/routers/common")
 
 // ProtocolMiddlewares returns HTTP protocol related middlewares, and it provides a global panic recovery
 func ProtocolMiddlewares() (handlers []any) {
@@ -49,11 +53,11 @@ func RequestContextHandler() func(h http.Handler) http.Handler {
 			ctx, finished := reqctx.NewRequestContext(req.Context(), profDesc)
 			defer finished()
 
-			ctx, span := gtprof.GetTracer().Start(ctx, gtprof.TraceSpanHTTP)
+			ctx, span := tracer.Start(ctx, gtprof.TraceSpanHTTP)
 			req = req.WithContext(ctx)
 			defer func() {
 				chiCtx := chi.RouteContext(req.Context())
-				span.SetAttributeString(gtprof.TraceAttrHTTPRoute, chiCtx.RoutePattern())
+				span.SetAttributes(attribute.String(gtprof.TraceAttrHTTPRoute, chiCtx.RoutePattern()))
 				span.End()
 			}()
 

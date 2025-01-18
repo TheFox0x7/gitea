@@ -9,15 +9,21 @@ import (
 
 	"code.gitea.io/gitea/modules/gtprof"
 	"code.gitea.io/gitea/modules/reqctx"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type contextKeyType struct{}
 
+var tracer = otel.Tracer("code.gitea.io/gitea/modules/web/routing")
+
 var contextKey contextKeyType
 
-func StartContextSpan(ctx reqctx.RequestContext, spanName string) (*gtprof.TraceSpan, func()) {
+func StartContextSpan(ctx reqctx.RequestContext, spanName string) (trace.Span, func()) {
 	curTraceSpan := gtprof.GetContextSpan(ctx)
-	_, newTraceSpan := gtprof.GetTracer().Start(ctx, spanName)
+	_, newTraceSpan := tracer.Start(ctx, spanName)
 	ctx.SetContextValue(gtprof.ContextKeySpan, newTraceSpan)
 	return newTraceSpan, func() {
 		newTraceSpan.End()
@@ -29,9 +35,9 @@ func StartContextSpan(ctx reqctx.RequestContext, spanName string) (*gtprof.Trace
 func RecordFuncInfo(ctx context.Context, funcInfo *FuncInfo) (end func()) {
 	end = func() {}
 	if reqCtx := reqctx.FromContext(ctx); reqCtx != nil {
-		var traceSpan *gtprof.TraceSpan
+		var traceSpan trace.Span
 		traceSpan, end = StartContextSpan(reqCtx, "http.func")
-		traceSpan.SetAttributeString("func", funcInfo.shortName)
+		traceSpan.SetAttributes(attribute.String("func", funcInfo.shortName))
 	}
 	if record, ok := ctx.Value(contextKey).(*requestRecord); ok {
 		record.lock.Lock()

@@ -10,6 +10,8 @@ import (
 	"code.gitea.io/gitea/modules/gtprof"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"xorm.io/xorm/contexts"
 )
@@ -19,17 +21,18 @@ type EngineHook struct {
 	Logger    log.Logger
 }
 
+var tracer = otel.Tracer("code.gitea.io/gitea/models/db")
 var _ contexts.Hook = (*EngineHook)(nil)
 
 func (*EngineHook) BeforeProcess(c *contexts.ContextHook) (context.Context, error) {
-	ctx, _ := gtprof.GetTracer().Start(c.Ctx, gtprof.TraceSpanDatabase)
+	ctx, _ := tracer.Start(c.Ctx, gtprof.TraceSpanDatabase)
 	return ctx, nil
 }
 
 func (h *EngineHook) AfterProcess(c *contexts.ContextHook) error {
 	span := gtprof.GetContextSpan(c.Ctx)
 	if span != nil {
-		span.SetAttributeString(gtprof.TraceAttrDbSQL, c.SQL)
+		span.SetAttributes(attribute.String(gtprof.TraceAttrDbSQL, c.SQL))
 		span.End()
 	} else {
 		setting.PanicInDevOrTesting("span in database engine hook is nil")

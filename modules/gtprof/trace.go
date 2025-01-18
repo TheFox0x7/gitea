@@ -10,6 +10,11 @@ import (
 	"time"
 
 	"code.gitea.io/gitea/modules/util"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/embedded"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 type contextKey struct {
@@ -27,6 +32,7 @@ type traceSpanInternal interface {
 }
 
 type TraceSpan struct {
+	noop.Span
 	// immutable
 	parent        *TraceSpan
 	internalSpans []traceSpanInternal
@@ -38,6 +44,31 @@ type TraceSpan struct {
 	endTime    time.Time
 	attributes []TraceAttribute
 	children   []*TraceSpan
+}
+
+// IsRecording implements trace.Span.
+func (s *TraceSpan) IsRecording() bool {
+	return true
+}
+
+// SetAttributes implements trace.Span.
+func (s *TraceSpan) SetAttributes(kv ...attribute.KeyValue) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range kv {
+		s.attributes = append(s.attributes, TraceAttribute{
+			Key:   string(kv[i].Key),
+			Value: TraceValue{v: kv[i].Value.AsString()}})
+	}
+}
+
+// SetName implements trace.Span.
+func (s *TraceSpan) SetName(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.name = name
 }
 
 type TraceAttribute struct {
@@ -65,19 +96,13 @@ func (t *TraceValue) AsFloat64() float64 {
 
 var globalTraceStarters []traceStarter
 
-type Tracer struct {
+type InternalTracer struct {
+	embedded.Tracer
+
 	starters []traceStarter
 }
 
-func (s *TraceSpan) SetAttributeString(key, value string) *TraceSpan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.attributes = append(s.attributes, TraceAttribute{Key: key, Value: TraceValue{v: value}})
-	return s
-}
-
-func (t *Tracer) Start(ctx context.Context, spanName string) (context.Context, *TraceSpan) {
+func (t InternalTracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	starters := t.starters
 	if starters == nil {
 		starters = globalTraceStarters
@@ -99,7 +124,7 @@ func (t *Tracer) Start(ctx context.Context, spanName string) (context.Context, *
 	return ctx, ts
 }
 
-func (s *TraceSpan) End() {
+func (s *TraceSpan) End(options ...trace.SpanEndOption) {
 	s.mu.Lock()
 	s.endTime = time.Now()
 	s.mu.Unlock()
@@ -109,11 +134,19 @@ func (s *TraceSpan) End() {
 	}
 }
 
-func GetTracer() *Tracer {
-	return &Tracer{}
-}
-
 func GetContextSpan(ctx context.Context) *TraceSpan {
 	ts, _ := ctx.Value(ContextKeySpan).(*TraceSpan)
 	return ts
+}
+
+// InternalTracerProvider is a custom provider which handles internal tracers
+type InternalTracerProvider struct{ embedded.TracerProvider }
+
+// Tracer implements trace.Tracer for internal Tracing
+func (InternalTracerProvider) Tracer(_ string, _ ...trace.TracerOption) trace.Tracer {
+	return InternalTracer{}
+}
+
+func init() {
+	otel.SetTracerProvider(InternalTracerProvider{})
 }

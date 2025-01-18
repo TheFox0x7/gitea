@@ -22,6 +22,8 @@ import (
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/process"
 	"code.gitea.io/gitea/modules/util"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // TrustedCmdArgs returns the trusted arguments for git command.
@@ -36,6 +38,8 @@ var (
 	// defaultCommandExecutionTimeout default command execution timeout duration
 	defaultCommandExecutionTimeout = 360 * time.Second
 )
+
+var tracer = otel.Tracer("code.gitea.io/gitea/modules/git")
 
 // DefaultLocale is the default LC_ALL to run git commands in.
 const DefaultLocale = "C"
@@ -305,10 +309,10 @@ func (c *Command) run(skip int, opts *RunOpts) error {
 	desc := fmt.Sprintf("git.Run(by:%s, repo:%s): %s", callerInfo, logArgSanitize(opts.Dir), cmdLogString)
 	log.Debug("git.Command: %s", desc)
 
-	_, span := gtprof.GetTracer().Start(c.parentContext, gtprof.TraceSpanGitRun)
+	_, span := tracer.Start(c.parentContext, gtprof.TraceSpanGitRun)
 	defer span.End()
-	span.SetAttributeString(gtprof.TraceAttrFuncCaller, callerInfo)
-	span.SetAttributeString(gtprof.TraceAttrGitCommand, cmdLogString)
+	span.SetAttributes(attribute.String(gtprof.TraceAttrFuncCaller, callerInfo),
+		attribute.String(gtprof.TraceAttrGitCommand, cmdLogString))
 
 	var ctx context.Context
 	var cancel context.CancelFunc
