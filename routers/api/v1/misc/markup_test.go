@@ -22,6 +22,7 @@ import (
 	context_service "code.gitea.io/gitea/services/context"
 	"code.gitea.io/gitea/services/contexttest"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -52,7 +53,7 @@ func testRenderMarkup(t *testing.T, mode string, wiki bool, filePath, text, expe
 	ctx.Repo = &context_service.Repository{}
 	ctx.Repo.Repository = unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
 	web.SetForm(ctx, &options)
-	Markup(ctx)
+	Markup(&huma.OpenAPI{})(ctx)
 	assert.Equal(t, expectedBody, resp.Body.String())
 	assert.Equal(t, expectedCode, resp.Code)
 	resp.Body.Reset()

@@ -100,6 +100,7 @@ import (
 	_ "code.gitea.io/gitea/routers/api/v1/swagger" // for swagger generation
 
 	"gitea.com/go-chi/binding"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/cors"
 )
 
@@ -866,8 +867,57 @@ func checkDeprecatedAuthMethods(ctx *context.APIContext) {
 
 // Routes registers all v1 APIs routes to web application.
 func Routes() *web.Router {
+	oapi := &huma.OpenAPI{}
 	m := web.NewRouter()
+	oapi.Info = &huma.Info{
+		Title:       "Gitea API",
+		Description: "Documentation for gitea's api",
+		Version:     setting.AppVer,
+		License:     &huma.License{Name: "MIT", Identifier: "MIT"},
+	}
+	oapi.Servers = []*huma.Server{
+		{URL: setting.AppURL + "api/v1", Description: "This gitea instance"},
+	}
+	oapi.Components = &huma.Components{Schemas: huma.NewMapRegistry("#/components/schemas", huma.DefaultSchemaNamer)}
+	oapi.OpenAPI = "3.1.0"
 
+	oapi.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"BasicAuth": {
+			Type:        "http",
+			Scheme:      "basic",
+			Description: "Basic Auth",
+		},
+		"AccessToken": {
+			Type:        "apiKey",
+			Description: "This authentication option is deprecated for removal in Gitea 1.23. Please use AuthorizationHeaderToken instead.",
+			Name:        "access_token",
+			In:          "query",
+		},
+		"AuthorizationHeaderToken": {
+			Type:        "apiKey",
+			Description: "API tokens must be prepended with \"token\" followed by a space.",
+			Name:        "Authorization",
+			In:          "header",
+		},
+		"SudoParam": {
+			Type:        "apiKey",
+			Description: "Sudo API request as the user provided as the key. Admin privileges are required.",
+			Name:        "sudo",
+			In:          "query",
+		},
+		"SudoHeader": {
+			Type:        "apiKey",
+			Description: "Sudo API request as the user provided as the key. Admin privileges are required.",
+			Name:        "Sudo",
+			In:          "header",
+		},
+		"TOTPHeader": {
+			Type:        "apiKey",
+			Description: "Must be used in combination with BasicAuth if two-factor authentication is enabled.",
+			Name:        "X-GITEA-OTP",
+			In:          "header",
+		},
+	}
 	m.Use(securityHeaders())
 	if setting.CORSConfig.Enabled {
 		m.Use(cors.Handler(cors.Options{
@@ -924,6 +974,15 @@ func Routes() *web.Router {
 				ctx.Redirect(setting.AppSubURL + "/api/swagger")
 			})
 		}
+		m.Get("openapi.json", func(w http.ResponseWriter, r *http.Request) {
+			payload, err := oapi.MarshalJSON()
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Add("Content-Type", "application/json")
+			w.Write(payload)
+		})
 
 		if setting.Federation.Enabled {
 			m.Get("/nodeinfo", misc.NodeInfo)
@@ -942,17 +1001,17 @@ func Routes() *web.Router {
 
 		// Misc (public accessible)
 		m.Group("", func() {
-			m.Get("/version", misc.Version)
-			m.Get("/signing-key.gpg", misc.SigningKey)
-			m.Post("/markup", reqToken(), bind(api.MarkupOption{}), misc.Markup)
-			m.Post("/markdown", reqToken(), bind(api.MarkdownOption{}), misc.Markdown)
-			m.Post("/markdown/raw", reqToken(), misc.MarkdownRaw)
-			m.Get("/gitignore/templates", misc.ListGitignoresTemplates)
-			m.Get("/gitignore/templates/{name}", misc.GetGitignoreTemplateInfo)
-			m.Get("/licenses", misc.ListLicenseTemplates)
-			m.Get("/licenses/{name}", misc.GetLicenseTemplateInfo)
-			m.Get("/label/templates", misc.ListLabelTemplates)
-			m.Get("/label/templates/{name}", misc.GetLabelTemplate)
+			m.Get("/version", misc.Version(oapi))
+			m.Get("/signing-key.gpg", misc.SigningKey(oapi))
+			m.Post("/markup", reqToken(), bind(api.MarkupOption{}), misc.Markup(oapi))
+			m.Post("/markdown", reqToken(), bind(api.MarkdownOption{}), misc.Markdown(oapi))
+			m.Post("/markdown/raw", reqToken(), misc.MarkdownRaw(oapi))
+			m.Get("/gitignore/templates", misc.ListGitignoresTemplates(oapi))
+			m.Get("/gitignore/templates/{name}", misc.GetGitignoreTemplateInfo(oapi))
+			m.Get("/licenses", misc.ListLicenseTemplates(oapi))
+			m.Get("/licenses/{name}", misc.GetLicenseTemplateInfo(oapi))
+			m.Get("/label/templates", misc.ListLabelTemplates(oapi))
+			m.Get("/label/templates/{name}", misc.GetLabelTemplate(oapi))
 
 			m.Group("/settings", func() {
 				m.Get("/ui", settings.GetGeneralUISettings)
@@ -1270,9 +1329,9 @@ func Routes() *web.Router {
 					m.Post("/new", reqToken(), mustNotBeArchived, reqRepoWriter(unit.TypeWiki), bind(api.CreateWikiPageOptions{}), repo.NewWikiPage)
 					m.Get("/pages", repo.ListWikiPages)
 				}, mustEnableWiki)
-				m.Post("/markup", reqToken(), bind(api.MarkupOption{}), misc.Markup)
-				m.Post("/markdown", reqToken(), bind(api.MarkdownOption{}), misc.Markdown)
-				m.Post("/markdown/raw", reqToken(), misc.MarkdownRaw)
+				m.Post("/markup", reqToken(), bind(api.MarkupOption{}), misc.Markup(oapi))
+				m.Post("/markdown", reqToken(), bind(api.MarkdownOption{}), misc.Markdown(oapi))
+				m.Post("/markdown/raw", reqToken(), misc.MarkdownRaw(oapi))
 				m.Get("/stargazers", reqStarsEnabled(), repo.ListStargazers)
 				m.Get("/subscribers", repo.ListSubscribers)
 				m.Group("/subscription", func() {
@@ -1385,7 +1444,7 @@ func Routes() *web.Router {
 						m.Delete("", bind(api.DeleteFileOptions{}), reqRepoBranchWriter, mustNotBeArchived, repo.DeleteFile)
 					}, reqToken())
 				}, reqRepoReader(unit.TypeCode))
-				m.Get("/signing-key.gpg", misc.SigningKey)
+				m.Get("/signing-key.gpg", misc.SigningKey(oapi))
 				m.Group("/topics", func() {
 					m.Combo("").Get(repo.ListTopics).
 						Put(reqToken(), reqAdmin(), bind(api.RepoTopicOptions{}), repo.UpdateTopics)

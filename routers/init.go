@@ -184,7 +184,6 @@ func NormalRoutes() *web.Router {
 	_ = templates.HTMLRenderer()
 	r := web.NewRouter()
 	r.Use(common.ProtocolMiddlewares()...)
-
 	r.Mount("/", web_routers.Routes())
 	r.Mount("/api/v1", apiv1.Routes())
 	r.Mount("/api/internal", private.Routes())

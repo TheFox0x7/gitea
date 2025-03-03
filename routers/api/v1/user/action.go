@@ -6,6 +6,7 @@ package user
 import (
 	"errors"
 	"net/http"
+	"reflect"
 
 	actions_model "code.gitea.io/gitea/models/actions"
 	"code.gitea.io/gitea/models/db"
@@ -16,7 +17,124 @@ import (
 	actions_service "code.gitea.io/gitea/services/actions"
 	"code.gitea.io/gitea/services/context"
 	secret_service "code.gitea.io/gitea/services/secrets"
+	"github.com/danielgtaylor/huma/v2"
 )
+
+func getDefinitions(oapi *huma.OpenAPI) {
+	registry := oapi.Components.Schemas
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodPut,
+		Path:   "/user/actions/secrets/{secretname}",
+		Parameters: []*huma.Param{
+			{Name: "secretname", In: "path", Description: "name of the secret"},
+		},
+		RequestBody: &huma.RequestBody{
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: huma.SchemaFromType(registry, reflect.TypeOf(api.CreateOrUpdateSecretOption{}))},
+			},
+			Required: true,
+		},
+		Responses: map[string]*huma.Response{
+			"201": {Description: "reponse when creating a secret"},
+			"204": {Description: "reponse when updating a secret"},
+			"400": {Ref: "#/reponses/error"},
+			"404": {Ref: "#/reponses/notFound"},
+		},
+	})
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodDelete,
+		Path:   "/user/actions/secrets/{secretname}",
+		Parameters: []*huma.Param{
+			{Name: "secretname", In: "path", Description: "name of the secret", Required: true},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "delete one secret of the user"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodPost,
+		Path:   "/user/actions/variables/{variablename}",
+		Parameters: []*huma.Param{
+			{Name: "variablename", In: "path", Description: "name of the variable", Required: true},
+		},
+		RequestBody: &huma.RequestBody{
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: huma.SchemaFromType(registry, reflect.TypeOf(api.CreateVariableOption{}))},
+			},
+			Required: true,
+		},
+		Responses: map[string]*huma.Response{
+			"201": {Description: "response when creating a variable"},
+			"204": {Description: "response when creating a variable"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodPut,
+		Path:   "/user/actions/variables/{variablename}",
+		Parameters: []*huma.Param{
+			{Name: "variablename", In: "path", Description: "name of the variable", Required: true},
+		},
+		RequestBody: &huma.RequestBody{
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: huma.SchemaFromType(registry, reflect.TypeOf(api.UpdateVariableOption{}))},
+			},
+			Required: true,
+		},
+		Responses: map[string]*huma.Response{
+			"201": {Description: "response when updating a variable"},
+			"204": {Description: "response when updating a variable"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodDelete,
+		Path:   "/user/actions/variables/{variablename}",
+		Parameters: []*huma.Param{
+			{Name: "variablename", In: "path", Description: "name of the variable", Required: true},
+		},
+		Responses: map[string]*huma.Response{
+			"201": {Description: "response when deleting a variable"},
+			"204": {Description: "response when deleting a variable"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodGet,
+		Path:   "/user/actions/variables/{variablename}",
+		Parameters: []*huma.Param{
+			{Name: "variablename", In: "path", Description: "name of the variable", Required: true},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Ref: "#/responses/ActionVariable"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+
+	oapi.AddOperation(&huma.Operation{
+		Method: http.MethodGet,
+		Path:   "/user/actions/variables",
+		Parameters: []*huma.Param{
+			{Name: "page", In: "query", Description: "page number of results to return (1-based)", Schema: &huma.Schema{Type: "integer"}},
+			{Name: "limit", In: "query", Description: "page size of results", Schema: &huma.Schema{Type: "integer"}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Ref: "#/responses/VariableList"},
+			"400": {Ref: "#/responses/error"},
+			"404": {Ref: "#/responses/notFound"},
+		},
+	})
+}
 
 // create or update one secret of the user scope
 func CreateOrUpdateSecret(ctx *context.APIContext) {
