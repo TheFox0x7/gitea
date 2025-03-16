@@ -9,17 +9,21 @@ import (
 	"strings"
 
 	"code.gitea.io/gitea/modules/cache"
-	"code.gitea.io/gitea/modules/gtprof"
 	"code.gitea.io/gitea/modules/httplib"
 	"code.gitea.io/gitea/modules/reqctx"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/web/routing"
 	"code.gitea.io/gitea/services/context"
+	"go.opentelemetry.io/otel"
+	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"gitea.com/go-chi/session"
 	"github.com/chi-middleware/proxy"
 	"github.com/go-chi/chi/v5"
 )
+
+var tracer = otel.Tracer("code.gitea.io/gitea/routers")
 
 // ProtocolMiddlewares returns HTTP protocol related middlewares, and it provides a global panic recovery
 func ProtocolMiddlewares() (handlers []any) {
@@ -49,15 +53,16 @@ func RequestContextHandler() func(h http.Handler) http.Handler {
 			// because there might be a "gzip writer" in the middle, so the "written size" here is the compressed size
 			respWriter := context.WrapResponseWriter(respOrig)
 
+			ctx, span := tracer.Start(req.Context(), "route span", trace.WithAttributes(semconv.HTTPRequestMethodGet, semconv.HTTPRequestMethodTrace))
 			profDesc := fmt.Sprintf("HTTP: %s %s", req.Method, req.RequestURI)
-			ctx, finished := reqctx.NewRequestContext(req.Context(), profDesc)
+			ctx, finished := reqctx.NewRequestContext(ctx, profDesc)
 			defer finished()
 
-			ctx, span := gtprof.GetTracer().Start(ctx, gtprof.TraceSpanHTTP)
 			req = req.WithContext(ctx)
 			defer func() {
 				chiCtx := chi.RouteContext(req.Context())
-				span.SetAttributeString(gtprof.TraceAttrHTTPRoute, chiCtx.RoutePattern())
+				span.SetAttributes(semconv.HTTPRoute(chiCtx.RoutePattern()))
+				span.SetName(chiCtx.RoutePattern())
 				span.End()
 			}()
 

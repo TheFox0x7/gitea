@@ -18,11 +18,16 @@ import (
 	"time"
 
 	"code.gitea.io/gitea/modules/git/internal" //nolint:depguard // only this file can use the internal type CmdArg, other files and packages should use AddXxx functions
-	"code.gitea.io/gitea/modules/gtprof"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/process"
 	"code.gitea.io/gitea/modules/util"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 )
+
+var tracer = otel.Tracer("code.gitea.io/gitea/modules/git")
 
 // TrustedCmdArgs returns the trusted arguments for git command.
 // It's mainly for passing user-provided and trusted arguments to git command
@@ -273,8 +278,12 @@ func (c *Command) Run(ctx context.Context, opts *RunOpts) error {
 }
 
 func (c *Command) run(ctx context.Context, skip int, opts *RunOpts) error {
+	ctx, span := tracer.Start(ctx, "git command")
+	defer span.End()
+
 	if len(c.brokenArgs) != 0 {
 		log.Error("git command is broken: %s, broken args: %s", c.LogString(), strings.Join(c.brokenArgs, " "))
+		span.SetStatus(codes.Error, "broken git command")
 		return ErrBrokenCommand
 	}
 	if opts == nil {
@@ -296,10 +305,8 @@ func (c *Command) run(ctx context.Context, skip int, opts *RunOpts) error {
 	desc := fmt.Sprintf("git.Run(by:%s, repo:%s): %s", callerInfo, logArgSanitize(opts.Dir), cmdLogString)
 	log.Debug("git.Command: %s", desc)
 
-	_, span := gtprof.GetTracer().Start(ctx, gtprof.TraceSpanGitRun)
-	defer span.End()
-	span.SetAttributeString(gtprof.TraceAttrFuncCaller, callerInfo)
-	span.SetAttributeString(gtprof.TraceAttrGitCommand, cmdLogString)
+	span.SetName(callerInfo)
+	span.SetAttributes(semconv.ProcessCommandLine(cmdLogString))
 
 	var cancel context.CancelFunc
 	var finished context.CancelFunc
@@ -357,6 +364,7 @@ func (c *Command) run(ctx context.Context, skip int, opts *RunOpts) error {
 	}
 
 	if err != nil && ctx.Err() != context.DeadlineExceeded {
+		span.RecordError(err)
 		return err
 	}
 

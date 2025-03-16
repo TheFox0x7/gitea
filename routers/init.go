@@ -18,6 +18,7 @@ import (
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/markup"
 	"code.gitea.io/gitea/modules/markup/external"
+	"code.gitea.io/gitea/modules/opentelemetry"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/ssh"
 	"code.gitea.io/gitea/modules/storage"
@@ -114,6 +115,7 @@ func InitWebInstallPage(ctx context.Context) {
 // InitWebInstalled is for global installed configuration.
 func InitWebInstalled(ctx context.Context) {
 	mustInitCtx(ctx, git.InitFull)
+	mustInitCtx(ctx, opentelemetry.Init)
 	log.Info("Git version: %s (home: %s)", git.DefaultFeatures().VersionInfo(), git.HomeDir())
 	if !git.DefaultFeatures().SupportHashSha256 {
 		log.Warn("sha256 hash support is disabled - requires Git >= 2.42." + util.Iif(git.DefaultFeatures().UsingGogit, " Gogit is currently unsupported.", ""))

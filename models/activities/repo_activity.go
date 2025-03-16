@@ -15,10 +15,13 @@ import (
 	user_model "code.gitea.io/gitea/models/user"
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/gitrepo"
+	"go.opentelemetry.io/otel"
 
 	"xorm.io/builder"
 	"xorm.io/xorm"
 )
+
+var tracer = otel.Tracer("code.gitea.io/gitea/models/activities")
 
 // ActivityAuthorData represents statistical git commit count data
 type ActivityAuthorData struct {
@@ -48,7 +51,10 @@ type ActivityStats struct {
 
 // GetActivityStats return stats for repository at given time range
 func GetActivityStats(ctx context.Context, repo *repo_model.Repository, timeFrom time.Time, releases, issues, prs, code bool) (*ActivityStats, error) {
+	ctx, span := tracer.Start(ctx, "GetActivityStats")
+	defer span.End()
 	stats := &ActivityStats{Code: &git.CodeActivityStats{}}
+
 	if releases {
 		if err := stats.FillReleases(ctx, repo.ID, timeFrom); err != nil {
 			return nil, fmt.Errorf("FillReleases: %w", err)
@@ -68,13 +74,16 @@ func GetActivityStats(ctx context.Context, repo *repo_model.Repository, timeFrom
 		return nil, fmt.Errorf("FillUnresolvedIssues: %w", err)
 	}
 	if code {
+		ctx, codeSpan := tracer.Start(ctx, "CodeActivityStats")
+		defer codeSpan.End()
+
 		gitRepo, closer, err := gitrepo.RepositoryFromContextOrOpen(ctx, repo)
 		if err != nil {
 			return nil, fmt.Errorf("OpenRepository: %w", err)
 		}
 		defer closer.Close()
 
-		code, err := gitRepo.GetCodeActivityStats(timeFrom, repo.DefaultBranch)
+		code, err := gitRepo.GetCodeActivityStats(ctx, timeFrom, repo.DefaultBranch)
 		if err != nil {
 			return nil, fmt.Errorf("FillFromGit: %w", err)
 		}
@@ -85,13 +94,15 @@ func GetActivityStats(ctx context.Context, repo *repo_model.Repository, timeFrom
 
 // GetActivityStatsTopAuthors returns top author stats for git commits for all branches
 func GetActivityStatsTopAuthors(ctx context.Context, repo *repo_model.Repository, timeFrom time.Time, count int) ([]*ActivityAuthorData, error) {
+	ctx, span := tracer.Start(ctx, "GetCodeActivityStats")
+	defer span.End()
 	gitRepo, closer, err := gitrepo.RepositoryFromContextOrOpen(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("OpenRepository: %w", err)
 	}
 	defer closer.Close()
 
-	code, err := gitRepo.GetCodeActivityStats(timeFrom, "")
+	code, err := gitRepo.GetCodeActivityStats(ctx, timeFrom, "")
 	if err != nil {
 		return nil, fmt.Errorf("FillFromGit: %w", err)
 	}
@@ -209,6 +220,8 @@ func (stats *ActivityStats) PublishedReleaseCount() int {
 
 // FillPullRequests returns pull request information for activity page
 func (stats *ActivityStats) FillPullRequests(ctx context.Context, repoID int64, fromTime time.Time) error {
+	ctx, span := tracer.Start(ctx, "FillPullRequests")
+	defer span.End()
 	var err error
 	var count int64
 
@@ -217,15 +230,18 @@ func (stats *ActivityStats) FillPullRequests(ctx context.Context, repoID int64, 
 	sess.OrderBy("pull_request.merged_unix DESC")
 	stats.MergedPRs = make(issues_model.PullRequestList, 0)
 	if err = sess.Find(&stats.MergedPRs); err != nil {
+		span.RecordError(err)
 		return err
 	}
 	if err = stats.MergedPRs.LoadAttributes(ctx); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
 	// Merged pull request authors
 	sess = pullRequestsForActivityStatement(ctx, repoID, fromTime, true)
 	if _, err = sess.Select("count(distinct issue.poster_id) as `count`").Table("pull_request").Get(&count); err != nil {
+		span.RecordError(err)
 		return err
 	}
 	stats.MergedPRAuthorCount = count
@@ -235,15 +251,18 @@ func (stats *ActivityStats) FillPullRequests(ctx context.Context, repoID int64, 
 	sess.OrderBy("issue.created_unix ASC")
 	stats.OpenedPRs = make(issues_model.PullRequestList, 0)
 	if err = sess.Find(&stats.OpenedPRs); err != nil {
+		span.RecordError(err)
 		return err
 	}
 	if err = stats.OpenedPRs.LoadAttributes(ctx); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
 	// Opened pull request authors
 	sess = pullRequestsForActivityStatement(ctx, repoID, fromTime, false)
 	if _, err = sess.Select("count(distinct issue.poster_id) as `count`").Table("pull_request").Get(&count); err != nil {
+		span.RecordError(err)
 		return err
 	}
 	stats.OpenedPRAuthorCount = count
@@ -268,6 +287,8 @@ func pullRequestsForActivityStatement(ctx context.Context, repoID int64, fromTim
 
 // FillIssues returns issue information for activity page
 func (stats *ActivityStats) FillIssues(ctx context.Context, repoID int64, fromTime time.Time) error {
+	ctx, span := tracer.Start(ctx, "FillIssues")
+	defer span.End()
 	var err error
 	var count int64
 
@@ -367,6 +388,8 @@ func issuesForActivityStatement(ctx context.Context, repoID int64, fromTime time
 
 // FillReleases returns release information for activity page
 func (stats *ActivityStats) FillReleases(ctx context.Context, repoID int64, fromTime time.Time) error {
+	ctx, span := tracer.Start(ctx, "FillReleases")
+	defer span.End()
 	var err error
 	var count int64
 
@@ -375,12 +398,14 @@ func (stats *ActivityStats) FillReleases(ctx context.Context, repoID int64, from
 	sess.OrderBy("`release`.created_unix DESC")
 	stats.PublishedReleases = make([]*repo_model.Release, 0)
 	if err = sess.Find(&stats.PublishedReleases); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
 	// Published releases authors
 	sess = releasesForActivityStatement(ctx, repoID, fromTime)
 	if _, err = sess.Select("count(distinct `release`.publisher_id) as `count`").Table("release").Get(&count); err != nil {
+		span.RecordError(err)
 		return err
 	}
 	stats.PublishedReleaseAuthorCount = count
