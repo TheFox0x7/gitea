@@ -44,20 +44,11 @@ func ensureValidGitRepository(ctx context.Context, repoPath string) error {
 func catFileBatchCheck(ctx context.Context, repoPath string) (WriteCloserError, *bufio.Reader, func()) {
 	batchStdinReader, batchStdinWriter := io.Pipe()
 	batchStdoutReader, batchStdoutWriter := io.Pipe()
-	ctx, ctxCancel := context.WithCancel(ctx)
-	closed := make(chan struct{})
-	cancel := func() {
-		ctxCancel()
+	ctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(ctx, func() {
 		_ = batchStdoutReader.Close()
 		_ = batchStdinWriter.Close()
-		<-closed
-	}
-
-	// Ensure cancel is called as soon as the provided context is cancelled
-	go func() {
-		<-ctx.Done()
-		cancel()
-	}()
+	})
 
 	go func() {
 		stderr := strings.Builder{}
@@ -77,7 +68,7 @@ func catFileBatchCheck(ctx context.Context, repoPath string) (WriteCloserError, 
 			_ = batchStdoutWriter.Close()
 			_ = batchStdinReader.Close()
 		}
-		close(closed)
+		cancel()
 	}()
 
 	// For simplicities sake we'll use a buffered reader to read from the cat-file --batch-check
@@ -92,20 +83,11 @@ func catFileBatch(ctx context.Context, repoPath string) (WriteCloserError, *bufi
 	// so let's create a batch stdin and stdout
 	batchStdinReader, batchStdinWriter := io.Pipe()
 	batchStdoutReader, batchStdoutWriter := nio.Pipe(buffer.New(32 * 1024))
-	ctx, ctxCancel := context.WithCancel(ctx)
-	closed := make(chan struct{})
-	cancel := func() {
-		ctxCancel()
-		_ = batchStdinWriter.Close()
+	ctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(ctx, func() {
 		_ = batchStdoutReader.Close()
-		<-closed
-	}
-
-	// Ensure cancel is called as soon as the provided context is cancelled
-	go func() {
-		<-ctx.Done()
-		cancel()
-	}()
+		_ = batchStdinWriter.Close()
+	})
 
 	go func() {
 		stderr := strings.Builder{}
@@ -125,7 +107,7 @@ func catFileBatch(ctx context.Context, repoPath string) (WriteCloserError, *bufi
 			_ = batchStdoutWriter.Close()
 			_ = batchStdinReader.Close()
 		}
-		close(closed)
+		cancel()
 	}()
 
 	// For simplicities sake we'll us a buffered reader to read from the cat-file --batch
