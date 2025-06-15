@@ -41,7 +41,6 @@ Outputs to 'cert.pem' and 'key.pem' and will overwrite existing files.`,
 			},
 			&cli.StringFlag{
 				Name:  "ecdsa-curve",
-				Value: "",
 				Usage: "ECDSA curve to use to generate a key. Valid values are P224, P256, P384, P521",
 			},
 			&cli.IntFlag{
@@ -51,7 +50,6 @@ Outputs to 'cert.pem' and 'key.pem' and will overwrite existing files.`,
 			},
 			&cli.StringFlag{
 				Name:  "start-date",
-				Value: "",
 				Usage: "Creation date formatted as Jan 1 15:04:05 2011",
 			},
 			&cli.DurationFlag{

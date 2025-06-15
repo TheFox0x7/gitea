@@ -77,7 +77,6 @@ var (
 			&cli.StringFlag{
 				Name:  "content",
 				Usage: "a content of a message",
-				Value: "",
 			},
 			&cli.BoolFlag{
 				Name:    "force",
@@ -88,11 +87,12 @@ var (
 	}
 )
 
-func idFlag() *cli.Int64Flag {
-	return &cli.Int64Flag{
-		Name:  "id",
-		Usage: "ID of authentication source",
-	}
+func idFlag() []cli.Flag {
+	return []cli.Flag{&cli.Int64Flag{
+		Name:     "id",
+		Usage:    "ID of authentication source",
+		Required: true,
+	}}
 }
 
 func runRepoSyncReleases(ctx context.Context, _ *cli.Command) error {

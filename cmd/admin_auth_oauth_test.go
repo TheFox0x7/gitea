@@ -166,7 +166,7 @@ func TestUpdateOauth(t *testing.T) {
 			args: []string{
 				"--name", "test",
 			},
-			errMsg: "--id flag is missing",
+			errMsg: `Required flag "id" not set`,
 		},
 		{
 			name: "valid config",

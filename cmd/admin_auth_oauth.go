@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 
@@ -16,31 +15,14 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func oauthCLIFlags() []cli.Flag {
-	return []cli.Flag{
-		&cli.StringFlag{
-			Name:  "name",
-			Value: "",
-			Usage: "Application Name",
-		},
-		&cli.StringFlag{
-			Name:  "provider",
-			Value: "",
-			Usage: "OAuth2 Provider",
-		},
-		&cli.StringFlag{
-			Name:  "key",
-			Value: "",
-			Usage: "Client ID (Key)",
-		},
-		&cli.StringFlag{
-			Name:  "secret",
-			Value: "",
-			Usage: "Client Secret",
-		},
+// withOauthFlags creates list of smtp specific flags
+// isSetup toggles mandatory parameters on for setup scenario
+func withOauthFlags(isSetup bool) []cli.Flag {
+	flags := []cli.Flag{&cli.StringFlag{Name: "provider", Usage: "OAuth2 Provider"},
+		&cli.StringFlag{Name: "key", Usage: "Client ID (Key)"},
+		&cli.StringFlag{Name: "secret", Usage: "Client Secret"},
 		&cli.StringFlag{
 			Name:  "auto-discover-url",
-			Value: "",
 			Usage: "OpenID Connect Auto Discovery URL (only required when using OpenID Connect as provider)",
 		},
 		&cli.StringFlag{
@@ -50,78 +32,53 @@ func oauthCLIFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  "custom-tenant-id",
-			Value: "",
 			Usage: "Use custom Tenant ID for OAuth endpoints",
 		},
 		&cli.StringFlag{
 			Name:  "custom-auth-url",
-			Value: "",
 			Usage: "Use a custom Authorization URL (option for GitLab/GitHub)",
 		},
 		&cli.StringFlag{
 			Name:  "custom-token-url",
-			Value: "",
 			Usage: "Use a custom Token URL (option for GitLab/GitHub)",
 		},
 		&cli.StringFlag{
 			Name:  "custom-profile-url",
-			Value: "",
 			Usage: "Use a custom Profile URL (option for GitLab/GitHub)",
 		},
+		&cli.StringFlag{Name: "admin-group", Usage: "Group Claim value for administrator users"},
+		&cli.StringFlag{Name: "restricted-group", Usage: "Group Claim value for restricted users"},
+
 		&cli.StringFlag{
 			Name:  "custom-email-url",
-			Value: "",
 			Usage: "Use a custom Email URL (option for GitHub)",
 		},
 		&cli.StringFlag{
-			Name:  "icon-url",
-			Value: "",
-			Usage: "Custom icon URL for OAuth2 login source",
+			Name:  "required-claim-value",
+			Usage: "Claim value that has to be set to allow users to login with this source",
 		},
-		&cli.BoolFlag{
-			Name:  "skip-local-2fa",
-			Usage: "Set to true to skip local 2fa for users authenticated by this source",
+
+		&cli.StringFlag{
+			Name:  "required-claim-name",
+			Usage: "Claim name that has to be set to allow users to login with this source",
 		},
+		&cli.StringFlag{Name: "icon-url", Usage: "Custom icon URL for OAuth2 login source"},
 		&cli.StringSliceFlag{
 			Name:  "scopes",
 			Value: nil,
 			Usage: "Scopes to request when to authenticate against this OAuth2 source",
 		},
 		&cli.StringFlag{
-			Name:  "required-claim-name",
-			Value: "",
-			Usage: "Claim name that has to be set to allow users to login with this source",
-		},
-		&cli.StringFlag{
-			Name:  "required-claim-value",
-			Value: "",
-			Usage: "Claim value that has to be set to allow users to login with this source",
-		},
-		&cli.StringFlag{
 			Name:  "group-claim-name",
-			Value: "",
 			Usage: "Claim name providing group names for this source",
 		},
-		&cli.StringFlag{
-			Name:  "admin-group",
-			Value: "",
-			Usage: "Group Claim value for administrator users",
-		},
-		&cli.StringFlag{
-			Name:  "restricted-group",
-			Value: "",
-			Usage: "Group Claim value for restricted users",
-		},
-		&cli.StringFlag{
-			Name:  "group-team-map",
-			Value: "",
-			Usage: "JSON mapping between groups and org teams",
-		},
+		&cli.StringFlag{Name: "group-team-map", Usage: "JSON mapping between groups and org teams"},
 		&cli.BoolFlag{
 			Name:  "group-team-map-removal",
 			Usage: "Activate automatic team membership removal depending on groups",
-		},
-	}
+		}}
+
+	return withCommonAuthFlags(flags, isSetup)
 }
 
 func microcmdAuthAddOauth() *cli.Command {
@@ -131,7 +88,7 @@ func microcmdAuthAddOauth() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().runAddOauth(ctx, cmd)
 		},
-		Flags: oauthCLIFlags(),
+		Flags: withOauthFlags(true),
 	}
 }
 
@@ -142,10 +99,7 @@ func microcmdAuthUpdateOauth() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().runUpdateOauth(ctx, cmd)
 		},
-		Flags: append(oauthCLIFlags()[:1], append([]cli.Flag{&cli.Int64Flag{
-			Name:  "id",
-			Usage: "ID of authentication source",
-		}}, oauthCLIFlags()[1:]...)...),
+		Flags: withOauthFlags(false),
 	}
 }
 
@@ -189,7 +143,10 @@ func (a *authService) runAddOauth(ctx context.Context, c *cli.Command) error {
 	if config.Provider == "openidConnect" {
 		discoveryURL, err := url.Parse(config.OpenIDConnectAutoDiscoveryURL)
 		if err != nil || (discoveryURL.Scheme != "http" && discoveryURL.Scheme != "https") {
-			return fmt.Errorf("invalid Auto Discovery URL: %s (this must be a valid URL starting with http:// or https://)", config.OpenIDConnectAutoDiscoveryURL)
+			return fmt.Errorf(
+				"invalid Auto Discovery URL: %s (this must be a valid URL starting with http:// or https://)",
+				config.OpenIDConnectAutoDiscoveryURL,
+			)
 		}
 	}
 
@@ -203,10 +160,6 @@ func (a *authService) runAddOauth(ctx context.Context, c *cli.Command) error {
 }
 
 func (a *authService) runUpdateOauth(ctx context.Context, c *cli.Command) error {
-	if !c.IsSet("id") {
-		return errors.New("--id flag is missing")
-	}
-
 	if err := a.initDB(ctx); err != nil {
 		return err
 	}

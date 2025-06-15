@@ -27,7 +27,7 @@ func TestAddSMTP(t *testing.T) {
 				"--host", "localhost",
 				"--port", "25",
 			},
-			errMsg: "name must be set",
+			errMsg: `Required flag "name" not set`,
 		},
 		{
 			name: "missing host",
@@ -35,7 +35,7 @@ func TestAddSMTP(t *testing.T) {
 				"--name", "test",
 				"--port", "25",
 			},
-			errMsg: "host must be set",
+			errMsg: `Required flag "host" not set`,
 		},
 		{
 			name: "missing port",
@@ -43,7 +43,7 @@ func TestAddSMTP(t *testing.T) {
 				"--name", "test",
 				"--host", "localhost",
 			},
-			errMsg: "port must be set",
+			errMsg: `Required flag "port" not set`,
 		},
 		{
 			name: "valid config",
@@ -147,7 +147,7 @@ func TestUpdateSMTP(t *testing.T) {
 				"--host", "localhost",
 				"--port", "25",
 			},
-			errMsg: "--id flag is missing",
+			errMsg: `Required flag "id" not set`,
 		},
 		{
 			name: "valid config",

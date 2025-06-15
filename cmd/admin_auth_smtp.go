@@ -15,63 +15,41 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func smtpCLIFlags() []cli.Flag {
-	return []cli.Flag{
-		&cli.StringFlag{
-			Name:  "name",
-			Value: "",
-			Usage: "Application Name",
-		},
-		&cli.StringFlag{
-			Name:  "auth-type",
-			Value: "PLAIN",
-			Usage: "SMTP Authentication Type (PLAIN/LOGIN/CRAM-MD5) default PLAIN",
-		},
-		&cli.StringFlag{
-			Name:  "host",
-			Value: "",
-			Usage: "SMTP Host",
-		},
-		&cli.IntFlag{
-			Name:  "port",
-			Usage: "SMTP Port",
-		},
+// withSmtpFlags creates list of smtp specific flags
+// isSetup toggles mandatory parameters on for setup scenario
+func withSmtpFlags(isSetup bool) []cli.Flag {
+	flags := []cli.Flag{
+		&cli.StringFlag{Name: "host", Usage: "SMTP Host", Required: isSetup},
+		&cli.IntFlag{Name: "port", Usage: "SMTP Port", Required: isSetup},
+		&cli.BoolFlag{Name: "active", Usage: "This Authentication Source is Activated.", Value: true},
+		&cli.BoolFlag{Name: "disable-helo", Usage: "Disable SMTP helo."},
 		&cli.BoolFlag{
 			Name:  "force-smtps",
 			Usage: "SMTPS is always used on port 465. Set this to force SMTPS on other ports.",
-			Value: true,
 		},
-		&cli.BoolFlag{
-			Name:  "skip-verify",
-			Usage: "Skip TLS verify.",
-			Value: true,
+		&cli.BoolFlag{Name: "skip-verify", Usage: "Skip TLS verify."}, // Problably could be global
+		&cli.StringFlag{
+			Name:  "auth-type",
+			Value: "PLAIN",
+			Usage: "SMTP Authentication Type (PLAIN/LOGIN/CRAM-MD5)",
+			Validator: func(auth string) error {
+				validAuthTypes := []string{"PLAIN", "LOGIN", "CRAM-MD5"}
+				if !util.SliceContainsString(validAuthTypes, strings.ToUpper(auth)) {
+					return errors.New("Auth must be one of PLAIN/LOGIN/CRAM-MD5")
+				}
+				return nil
+			},
 		},
+
 		&cli.StringFlag{
 			Name:  "helo-hostname",
-			Value: "",
 			Usage: "Hostname sent with HELO. Leave blank to send current hostname",
 		},
-		&cli.BoolFlag{
-			Name:  "disable-helo",
-			Usage: "Disable SMTP helo.",
-			Value: true,
-		},
 		&cli.StringFlag{
-			Name:  "allowed-domains",
-			Value: "",
+			Name:  "allowed-domains", // move to allow domain and multiple uses?
 			Usage: "Leave empty to allow all domains. Separate multiple domains with a comma (',')",
-		},
-		&cli.BoolFlag{
-			Name:  "skip-local-2fa",
-			Usage: "Skip 2FA to log on.",
-			Value: true,
-		},
-		&cli.BoolFlag{
-			Name:  "active",
-			Usage: "This Authentication Source is Activated.",
-			Value: true,
-		},
-	}
+		}}
+	return withCommonAuthFlags(flags, isSetup)
 }
 
 func microcmdAuthUpdateSMTP() *cli.Command {
@@ -81,10 +59,7 @@ func microcmdAuthUpdateSMTP() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().runUpdateSMTP(ctx, cmd)
 		},
-		Flags: append(smtpCLIFlags()[:1], append([]cli.Flag{&cli.Int64Flag{
-			Name:  "id",
-			Usage: "ID of authentication source",
-		}}, smtpCLIFlags()[1:]...)...),
+		Flags: withSmtpFlags(false),
 	}
 }
 
@@ -95,17 +70,12 @@ func microcmdAuthAddSMTP() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().runAddSMTP(ctx, cmd)
 		},
-		Flags: smtpCLIFlags(),
+		Flags: withSmtpFlags(true),
 	}
 }
 
 func parseSMTPConfig(c *cli.Command, conf *smtp.Source) error {
 	if c.IsSet("auth-type") {
-		conf.Auth = c.String("auth-type")
-		validAuthTypes := []string{"PLAIN", "LOGIN", "CRAM-MD5"}
-		if !util.SliceContainsString(validAuthTypes, strings.ToUpper(c.String("auth-type"))) {
-			return errors.New("Auth must be one of PLAIN/LOGIN/CRAM-MD5")
-		}
 		conf.Auth = c.String("auth-type")
 	}
 	if c.IsSet("host") {
@@ -137,15 +107,6 @@ func (a *authService) runAddSMTP(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	if !c.IsSet("name") || len(c.String("name")) == 0 {
-		return errors.New("name must be set")
-	}
-	if !c.IsSet("host") || len(c.String("host")) == 0 {
-		return errors.New("host must be set")
-	}
-	if !c.IsSet("port") {
-		return errors.New("port must be set")
-	}
 	active := true
 	if c.IsSet("active") {
 		active = c.Bool("active")

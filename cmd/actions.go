@@ -32,7 +32,6 @@ var (
 			&cli.StringFlag{
 				Name:    "scope",
 				Aliases: []string{"s"},
-				Value:   "",
 				Usage:   "{owner}[/{repo}] - leave empty for a global runner",
 			},
 		},

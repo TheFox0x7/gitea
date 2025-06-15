@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -21,7 +20,7 @@ var (
 	microcmdAuthDelete = &cli.Command{
 		Name:   "delete",
 		Usage:  "Delete specific auth source",
-		Flags:  []cli.Flag{idFlag()},
+		Flags:  idFlag(),
 		Action: runDeleteAuth,
 	}
 	microcmdAuthList = &cli.Command{
@@ -92,7 +91,6 @@ func runDeleteAuth(ctx context.Context, c *cli.Command) error {
 	if !c.IsSet("id") {
 		return errors.New("--id flag is missing")
 	}
-
 	if err := initDB(ctx); err != nil {
 		return err
 	}
@@ -103,4 +101,18 @@ func runDeleteAuth(ctx context.Context, c *cli.Command) error {
 	}
 
 	return auth_service.DeleteSource(ctx, source)
+}
+
+// withCommonAuthFlags adds basic flags
+func withCommonAuthFlags(flags []cli.Flag, isSetup bool) []cli.Flag {
+	if !isSetup {
+		flags = append(flags, idFlag()...)
+	}
+	return append(flags,
+		&cli.StringFlag{Name: "name", Usage: "Application Name", Required: isSetup},
+		&cli.BoolFlag{
+			Name:  "skip-local-2fa",
+			Usage: "Set to true to skip local 2fa for users authenticated by this source",
+			Value: true,
+		})
 }

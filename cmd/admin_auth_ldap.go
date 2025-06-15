@@ -24,51 +24,27 @@ type (
 	}
 )
 
-func commonLdapCLIFlags() []cli.Flag {
-	return []cli.Flag{
-		&cli.StringFlag{
-			Name:  "name",
-			Usage: "Authentication name.",
-		},
-		&cli.BoolFlag{
-			Name:  "not-active",
-			Usage: "Deactivate the authentication source.",
-		},
+func WithLdapCommonFlags(flags []cli.Flag) []cli.Flag {
+	return append(flags, &cli.BoolFlag{
+		Name:  "not-active",
+		Usage: "Deactivate the authentication source.",
+	}, // should be higher
 		&cli.BoolFlag{
 			Name:  "active",
 			Usage: "Activate the authentication source.",
-		},
-		&cli.StringFlag{
-			Name:  "security-protocol",
-			Usage: "Security protocol name.",
-		},
+		}, // should be higher
 		&cli.BoolFlag{
 			Name:  "skip-tls-verify",
 			Usage: "Disable TLS verification.",
-		},
+		}, // should be higher, blocked by https://github.com/go-gitea/gitea/issues/16376
+
 		&cli.StringFlag{
-			Name:  "host",
-			Usage: "The address where the LDAP server can be reached.",
-		},
-		&cli.IntFlag{
-			Name:  "port",
-			Usage: "The port to use when connecting to the LDAP server.",
-		},
-		&cli.StringFlag{
-			Name:  "user-search-base",
-			Usage: "The LDAP base at which user accounts will be searched for.",
-		},
-		&cli.StringFlag{
-			Name:  "user-filter",
-			Usage: "An LDAP filter declaring how to find the user record that is attempting to authenticate.",
+			Name:  "restricted-filter",
+			Usage: "An LDAP filter specifying if a user should be given restricted status.",
 		},
 		&cli.StringFlag{
 			Name:  "admin-filter",
 			Usage: "An LDAP filter specifying if a user should be given administrator privileges.",
-		},
-		&cli.StringFlag{
-			Name:  "restricted-filter",
-			Usage: "An LDAP filter specifying if a user should be given restricted status.",
 		},
 		&cli.BoolFlag{
 			Name:  "allow-deactivate-all",
@@ -82,59 +58,64 @@ func commonLdapCLIFlags() []cli.Flag {
 			Name:  "firstname-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s first name.",
 		},
+
 		&cli.StringFlag{
 			Name:  "surname-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s surname.",
 		},
 		&cli.StringFlag{
-			Name:  "email-attribute",
-			Usage: "The attribute of the user’s LDAP record containing the user’s email address.",
-		},
-		&cli.StringFlag{
 			Name:  "public-ssh-key-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s public ssh key.",
-		},
-		&cli.BoolFlag{
-			Name:  "skip-local-2fa",
-			Usage: "Set to true to skip local 2fa for users authenticated by this source",
 		},
 		&cli.StringFlag{
 			Name:  "avatar-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s avatar.",
-		},
-	}
+		})
 }
 
-func ldapBindDnCLIFlags() []cli.Flag {
-	return append(commonLdapCLIFlags(),
+func withLdapFlags(isSetup bool) []cli.Flag {
+	flags := []cli.Flag{&cli.StringFlag{
+		Name:     "security-protocol",
+		Usage:    "Security protocol name.",
+		Required: isSetup,
+	},
+		&cli.StringFlag{
+			Name:     "host",
+			Usage:    "The address where the LDAP server can be reached.",
+			Required: isSetup,
+		},
+		&cli.IntFlag{
+			Name:     "port",
+			Usage:    "The port to use when connecting to the LDAP server.",
+			Required: isSetup,
+		},
+
+		&cli.StringFlag{
+			Name:     "user-filter",
+			Usage:    "An LDAP filter declaring how to find the user record that is attempting to authenticate.",
+			Required: isSetup,
+		},
+		&cli.StringFlag{
+			Name:     "email-attribute",
+			Usage:    "The attribute of the user’s LDAP record containing the user’s email address.",
+			Required: isSetup,
+		},
+	}
+	return WithLdapCommonFlags(withCommonAuthFlags(flags, isSetup))
+}
+
+func withLdapBindFlags(isSetup bool) []cli.Flag {
+	return append(withLdapFlags(isSetup),
 		&cli.StringFlag{
 			Name:  "bind-dn",
 			Usage: "The DN to bind to the LDAP server with when searching for the user.",
 		},
-		&cli.StringFlag{
-			Name:  "bind-password",
-			Usage: "The password for the Bind DN, if any.",
-		},
-		&cli.BoolFlag{
-			Name:  "attributes-in-bind",
-			Usage: "Fetch attributes in bind DN context.",
-		},
-		&cli.BoolFlag{
-			Name:  "synchronize-users",
-			Usage: "Enable user synchronization.",
-		},
-		&cli.BoolFlag{
-			Name:  "disable-synchronize-users",
-			Usage: "Disable user synchronization.",
-		},
-		&cli.UintFlag{
-			Name:  "page-size",
-			Usage: "Search page size.",
-		},
-		&cli.BoolFlag{
-			Name:  "enable-groups",
-			Usage: "Enable LDAP groups",
-		},
+		&cli.StringFlag{Name: "bind-password", Usage: "The password for the Bind DN, if any."},
+		&cli.BoolFlag{Name: "attributes-in-bind", Usage: "Fetch attributes in bind DN context."},
+		&cli.BoolFlag{Name: "synchronize-users", Usage: "Enable user synchronization."},
+		&cli.BoolFlag{Name: "disable-synchronize-users", Usage: "Disable user synchronization."},
+		&cli.UintFlag{Name: "page-size", Usage: "Search page size."},
+		&cli.BoolFlag{Name: "enable-groups", Usage: "Enable LDAP groups"},
 		&cli.StringFlag{
 			Name:  "group-search-base-dn",
 			Usage: "The LDAP base DN at which group accounts will be searched for",
@@ -143,30 +124,25 @@ func ldapBindDnCLIFlags() []cli.Flag {
 			Name:  "group-member-attribute",
 			Usage: "Group attribute containing list of users",
 		},
-		&cli.StringFlag{
-			Name:  "group-user-attribute",
-			Usage: "User attribute listed in group",
-		},
-		&cli.StringFlag{
-			Name:  "group-filter",
-			Usage: "Verify group membership in LDAP",
-		},
-		&cli.StringFlag{
-			Name:  "group-team-map",
-			Usage: "Map LDAP groups to Organization teams",
-		},
+		&cli.StringFlag{Name: "group-user-attribute", Usage: "User attribute listed in group"},
+		&cli.StringFlag{Name: "group-filter", Usage: "Verify group membership in LDAP"},
+		&cli.StringFlag{Name: "group-team-map", Usage: "Map LDAP groups to Organization teams"},
 		&cli.BoolFlag{
 			Name:  "group-team-map-removal",
 			Usage: "Remove users from synchronized teams if user does not belong to corresponding LDAP group",
-		})
-}
-
-func ldapSimpleAuthCLIFlags() []cli.Flag {
-	return append(commonLdapCLIFlags(),
+		},
 		&cli.StringFlag{
-			Name:  "user-dn",
-			Usage: "The user's DN.",
-		})
+			Name:     "user-search-base",
+			Usage:    "The LDAP base at which user accounts will be searched for.",
+			Required: isSetup,
+		},
+	)
+}
+func withLdapSimpleFlags(isSetup bool) []cli.Flag {
+	return append(withLdapFlags(isSetup), &cli.StringFlag{Name: "user-dn", Usage: "The user's DN.", Required: isSetup}, &cli.StringFlag{
+		Name:  "user-search-base",
+		Usage: "The LDAP base at which user accounts will be searched for.",
+	})
 }
 
 func microcmdAuthAddLdapBindDn() *cli.Command {
@@ -176,7 +152,7 @@ func microcmdAuthAddLdapBindDn() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().addLdapBindDn(ctx, cmd)
 		},
-		Flags: ldapBindDnCLIFlags(),
+		Flags: withLdapBindFlags(true),
 	}
 }
 
@@ -187,7 +163,7 @@ func microcmdAuthUpdateLdapBindDn() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().updateLdapBindDn(ctx, cmd)
 		},
-		Flags: append([]cli.Flag{idFlag()}, ldapBindDnCLIFlags()...),
+		Flags: withLdapBindFlags(false),
 	}
 }
 
@@ -198,7 +174,7 @@ func microcmdAuthAddLdapSimpleAuth() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().addLdapSimpleAuth(ctx, cmd)
 		},
-		Flags: ldapSimpleAuthCLIFlags(),
+		Flags: withLdapSimpleFlags(true),
 	}
 }
 
@@ -209,7 +185,7 @@ func microcmdAuthUpdateLdapSimpleAuth() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return newAuthService().updateLdapSimpleAuth(ctx, cmd)
 		},
-		Flags: append([]cli.Flag{idFlag()}, ldapSimpleAuthCLIFlags()...),
+		Flags: withLdapSimpleFlags(false),
 	}
 }
 
@@ -349,17 +325,22 @@ func findLdapSecurityProtocolByName(name string) (ldap.SecurityProtocol, bool) {
 
 // getAuthSource gets the login source by its id defined in the command line flags.
 // It returns an error if the id is not set, does not match any source or if the source is not of expected type.
-func (a *authService) getAuthSource(ctx context.Context, c *cli.Command, authType auth.Type) (*auth.Source, error) {
-	if err := argsSet(c, "id"); err != nil {
-		return nil, err
-	}
+func (a *authService) getAuthSource(
+	ctx context.Context,
+	c *cli.Command,
+	authType auth.Type,
+) (*auth.Source, error) {
 	authSource, err := a.getAuthSourceByID(ctx, c.Int64("id"))
 	if err != nil {
 		return nil, err
 	}
 
 	if authSource.Type != authType {
-		return nil, fmt.Errorf("invalid authentication type. expected: %s, actual: %s", authType.String(), authSource.Type.String())
+		return nil, fmt.Errorf(
+			"invalid authentication type. expected: %s, actual: %s",
+			authType.String(),
+			authSource.Type.String(),
+		)
 	}
 
 	return authSource, nil
