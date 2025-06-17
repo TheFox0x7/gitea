@@ -88,9 +88,6 @@ func runListAuth(ctx context.Context, c *cli.Command) error {
 }
 
 func runDeleteAuth(ctx context.Context, c *cli.Command) error {
-	if !c.IsSet("id") {
-		return errors.New("--id flag is missing")
-	}
 	if err := initDB(ctx); err != nil {
 		return err
 	}
@@ -114,5 +111,10 @@ func withCommonAuthFlags(flags []cli.Flag, isSetup bool) []cli.Flag {
 			Name:  "skip-local-2fa",
 			Usage: "Set to true to skip local 2fa for users authenticated by this source",
 			Value: true,
+		}, &cli.BoolWithInverseFlag{
+			Name:  "active",
+			Usage: "Activate the authentication source",
+			Value: true,
 		})
+
 }

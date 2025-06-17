@@ -25,26 +25,18 @@ type (
 )
 
 func WithLdapCommonFlags(flags []cli.Flag) []cli.Flag {
-	return append(flags, &cli.BoolFlag{
-		Name:  "not-active",
-		Usage: "Deactivate the authentication source.",
-	}, // should be higher
-		&cli.BoolFlag{
-			Name:  "active",
-			Usage: "Activate the authentication source.",
-		}, // should be higher
+	return append(flags,
 		&cli.BoolFlag{
 			Name:  "skip-tls-verify",
 			Usage: "Disable TLS verification.",
-		}, // should be higher, blocked by https://github.com/go-gitea/gitea/issues/16376
-
-		&cli.StringFlag{
-			Name:  "restricted-filter",
-			Usage: "An LDAP filter specifying if a user should be given restricted status.",
-		},
+		}, // should be higher, blocked by https://github.com/go-gitea/gitea/issues/16376 - oauth doesn't implement it
 		&cli.StringFlag{
 			Name:  "admin-filter",
 			Usage: "An LDAP filter specifying if a user should be given administrator privileges.",
+		},
+		&cli.StringFlag{
+			Name:  "restricted-filter",
+			Usage: "An LDAP filter specifying if a user should be given restricted status.",
 		},
 		&cli.BoolFlag{
 			Name:  "allow-deactivate-all",
@@ -58,7 +50,6 @@ func WithLdapCommonFlags(flags []cli.Flag) []cli.Flag {
 			Name:  "firstname-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s first name.",
 		},
-
 		&cli.StringFlag{
 			Name:  "surname-attribute",
 			Usage: "The attribute of the user’s LDAP record containing the user’s surname.",
@@ -74,11 +65,12 @@ func WithLdapCommonFlags(flags []cli.Flag) []cli.Flag {
 }
 
 func withLdapFlags(isSetup bool) []cli.Flag {
-	flags := []cli.Flag{&cli.StringFlag{
-		Name:     "security-protocol",
-		Usage:    "Security protocol name.",
-		Required: isSetup,
-	},
+	flags := []cli.Flag{
+		&cli.StringFlag{
+			Name:     "security-protocol",
+			Usage:    "Security protocol name.",
+			Required: isSetup,
+		},
 		&cli.StringFlag{
 			Name:     "host",
 			Usage:    "The address where the LDAP server can be reached.",
@@ -138,6 +130,7 @@ func withLdapBindFlags(isSetup bool) []cli.Flag {
 		},
 	)
 }
+
 func withLdapSimpleFlags(isSetup bool) []cli.Flag {
 	return append(withLdapFlags(isSetup), &cli.StringFlag{Name: "user-dn", Usage: "The user's DN.", Required: isSetup}, &cli.StringFlag{
 		Name:  "user-search-base",

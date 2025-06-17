@@ -111,7 +111,7 @@ require (
 	github.com/tstranex/u2f v1.0.0
 	github.com/ulikunitz/xz v0.5.12
 	github.com/urfave/cli-docs/v3 v3.0.0-alpha6
-	github.com/urfave/cli/v3 v3.3.3
+	github.com/urfave/cli/v3 v3.3.8
 	github.com/wneessen/go-mail v0.6.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yohcop/openid-go v1.0.1

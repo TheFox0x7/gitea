@@ -21,7 +21,6 @@ func withSmtpFlags(isSetup bool) []cli.Flag {
 	flags := []cli.Flag{
 		&cli.StringFlag{Name: "host", Usage: "SMTP Host", Required: isSetup},
 		&cli.IntFlag{Name: "port", Usage: "SMTP Port", Required: isSetup},
-		&cli.BoolFlag{Name: "active", Usage: "This Authentication Source is Activated.", Value: true},
 		&cli.BoolFlag{Name: "disable-helo", Usage: "Disable SMTP helo."},
 		&cli.BoolFlag{
 			Name:  "force-smtps",
@@ -48,7 +47,8 @@ func withSmtpFlags(isSetup bool) []cli.Flag {
 		&cli.StringFlag{
 			Name:  "allowed-domains", // move to allow domain and multiple uses?
 			Usage: "Leave empty to allow all domains. Separate multiple domains with a comma (',')",
-		}}
+		},
+	}
 	return withCommonAuthFlags(flags, isSetup)
 }
 

@@ -18,7 +18,8 @@ import (
 // withOauthFlags creates list of smtp specific flags
 // isSetup toggles mandatory parameters on for setup scenario
 func withOauthFlags(isSetup bool) []cli.Flag {
-	flags := []cli.Flag{&cli.StringFlag{Name: "provider", Usage: "OAuth2 Provider"},
+	flags := []cli.Flag{
+		&cli.StringFlag{Name: "provider", Usage: "OAuth2 Provider"},
 		&cli.StringFlag{Name: "key", Usage: "Client ID (Key)"},
 		&cli.StringFlag{Name: "secret", Usage: "Client Secret"},
 		&cli.StringFlag{
@@ -48,7 +49,6 @@ func withOauthFlags(isSetup bool) []cli.Flag {
 		},
 		&cli.StringFlag{Name: "admin-group", Usage: "Group Claim value for administrator users"},
 		&cli.StringFlag{Name: "restricted-group", Usage: "Group Claim value for restricted users"},
-
 		&cli.StringFlag{
 			Name:  "custom-email-url",
 			Usage: "Use a custom Email URL (option for GitHub)",
@@ -57,7 +57,6 @@ func withOauthFlags(isSetup bool) []cli.Flag {
 			Name:  "required-claim-value",
 			Usage: "Claim value that has to be set to allow users to login with this source",
 		},
-
 		&cli.StringFlag{
 			Name:  "required-claim-name",
 			Usage: "Claim name that has to be set to allow users to login with this source",
@@ -76,7 +75,8 @@ func withOauthFlags(isSetup bool) []cli.Flag {
 		&cli.BoolFlag{
 			Name:  "group-team-map-removal",
 			Usage: "Activate automatic team membership removal depending on groups",
-		}}
+		},
+	}
 
 	return withCommonAuthFlags(flags, isSetup)
 }
@@ -153,7 +153,7 @@ func (a *authService) runAddOauth(ctx context.Context, c *cli.Command) error {
 	return a.createAuthSource(ctx, &auth_model.Source{
 		Type:            auth_model.OAuth2,
 		Name:            c.String("name"),
-		IsActive:        true,
+		IsActive:        c.Bool("active"),
 		Cfg:             config,
 		TwoFactorPolicy: util.Iif(c.Bool("skip-local-2fa"), "skip", ""),
 	})
@@ -252,8 +252,13 @@ func (a *authService) runUpdateOauth(ctx context.Context, c *cli.Command) error 
 		customURLMapping.Tenant = c.String("custom-tenant-id")
 	}
 
+	if c.IsSet("active") {
+		source.IsActive = c.Bool("active")
+	}
+
 	oAuth2Config.CustomURLMapping = customURLMapping
 	source.Cfg = oAuth2Config
 	source.TwoFactorPolicy = util.Iif(c.Bool("skip-local-2fa"), "skip", "")
+
 	return a.updateAuthSource(ctx, source)
 }
