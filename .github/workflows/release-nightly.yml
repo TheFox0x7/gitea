@@ -65,10 +65,6 @@ jobs:
       # fetch all commits instead of only the last as some branches are long lived and could have many between versions
       # fetch all tags to ensure that "git describe" reports expected Gitea version, eg. v1.21.0-dev-1-g1234567
       - run: git fetch --unshallow --quiet --tags --force
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          check-latest: true
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Get cleaned branch name
@@ -112,7 +108,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/riscv64
+          platforms: linux/amd64 #,linux/arm64,linux/riscv64
           push: true
           tags: ${{ steps.meta_rootless.outputs.tags }}
           annotations: ${{ steps.meta_rootless.outputs.annotations }}
@@ -122,7 +118,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/riscv64
+          platforms: linux/amd64 #,linux/arm64,linux/riscv64
           push: true
           file: Dockerfile.rootless
           tags: ${{ steps.meta_rootless.outputs.tags }}
