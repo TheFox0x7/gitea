@@ -2,7 +2,7 @@ name: release-nightly
 
 on:
   push:
-    branches: [main, release/v*]
+    branches: [main, release/v*,test/v*]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,7 +57,7 @@ jobs:
         run: |
           aws s3 sync dist/release s3://${{ secrets.AWS_S3_BUCKET }}/gitea/${{ steps.clean_name.outputs.branch }} --no-progress
   nightly-container:
-    runs-on: namespace-profile-gitea-release-docker
+    runs-on: ubuntu-latest
     permissions:
       packages: write # to publish to ghcr.io
     steps:
@@ -80,8 +80,7 @@ jobs:
         id: meta
         with:
           images: |-
-            gitea/gitea
-            ghcr.io/go-gitea/gitea
+            ghcr.io/thefox0x7/gitea
           tags: |
             type=raw,value=${{ steps.clean_name.outputs.branch }}
           annotations: |
@@ -90,8 +89,7 @@ jobs:
         id: meta_rootless
         with:
           images: |-
-            gitea/gitea
-            ghcr.io/go-gitea/gitea
+            ghcr.io/thefox0x7/gitea
           # each tag below will have the suffix of -rootless
           flavor: |
             suffix=-rootless
@@ -99,11 +97,11 @@ jobs:
             type=raw,value=${{ steps.clean_name.outputs.branch }}
           annotations: |
             org.opencontainers.image.authors="maintainers@gitea.io"
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # - name: Login to Docker Hub
+        # uses: docker/login-action@v3
+        # with:
+        #   username: ${{ secrets.DOCKERHUB_USERNAME }}
+        #   password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Login to GHCR using PAT
         uses: docker/login-action@v3
         with:
