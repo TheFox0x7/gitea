@@ -74,6 +74,7 @@ cpu.out
 /VERSION
 /.air
 /.go-licenses
+/.git
 
 # Files and folders that were previously generated
 /public/assets/img/webpack
