@@ -109,20 +109,23 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: ls -la
-      - name: build rootful docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/riscv64
-          push: true
-          tags: ${{ steps.meta_rootless.outputs.tags }}
-          annotations: ${{ steps.meta_rootless.outputs.annotations }}
-      - name: build rootless docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/riscv64
-          push: true
-          file: Dockerfile.rootless
-          tags: ${{ steps.meta_rootless.outputs.tags }}
-          annotations: ${{ steps.meta_rootless.outputs.annotations }}
+      - run: podman build . -f Dockerfile --platforms linux/amd64,linux/arm64,linux/riscv64 --jobs 3
+      - run: podman build . -f Dockerfile.rootless --platforms linux/amd64,linux/arm64,linux/riscv64 --jobs 3
+      - run: podman images
+      # - name: build rootful docker image
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     platforms: linux/amd64,linux/arm64,linux/riscv64
+      #     push: true
+      #     tags: ${{ steps.meta_rootless.outputs.tags }}
+      #     annotations: ${{ steps.meta_rootless.outputs.annotations }}
+      # - name: build rootless docker image
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     platforms: linux/amd64,linux/arm64,linux/riscv64
+      #     push: true
+      #     file: Dockerfile.rootless
+      #     tags: ${{ steps.meta_rootless.outputs.tags }}
+      #     annotations: ${{ steps.meta_rootless.outputs.annotations }}
