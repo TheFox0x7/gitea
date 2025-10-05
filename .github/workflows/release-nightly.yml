@@ -108,6 +108,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - run: ls -la
       - name: build rootful docker image
         uses: docker/build-push-action@v5
         with:
