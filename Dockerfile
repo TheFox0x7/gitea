@@ -34,7 +34,7 @@ COPY . ${GOPATH}/src/code.gitea.io/gitea
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target="/root/.cache/go-build" \
-    --mount=type=bind,source=".git",target="${GOPATH}/src/code.gitea.io/gitea/.git" \
+    --mount=type=bind,source="./.git",target="${GOPATH}/src/code.gitea.io/gitea/.git" \
     if [ -n "${GITEA_VERSION}" ]; then git checkout "${GITEA_VERSION}"; fi \
     && make build
 
