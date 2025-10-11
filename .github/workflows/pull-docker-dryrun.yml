@@ -27,7 +27,7 @@ jobs:
           REF_NAME=$(echo "${{ github.base_ref }}" | sed -e 's/refs\/heads\///' -e 's/refs\/tags\///' -e 's/release\/v//')
           echo "branch=${REF_NAME}-nightly" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           push: false
           tags: gitea/gitea:linux-amd64
@@ -50,7 +50,7 @@ jobs:
           REF_NAME=$(echo "${{ github.base_ref }}" | sed -e 's/refs\/heads\///' -e 's/refs\/tags\///' -e 's/release\/v//')
           echo "branch=${REF_NAME}-nightly" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           push: false
           file: Dockerfile.rootless
