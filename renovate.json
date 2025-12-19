@@ -3,7 +3,8 @@
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "onboarding": true,
   "extends": [
-    ":dependencyDashboard"
+    ":dependencyDashboard",
+    "group:recommended"
   ],
   "dependencyDashboardApproval": true,
   "platform": "github",
