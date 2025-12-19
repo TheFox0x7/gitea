@@ -1,6 +1,4 @@
 {
-  "username": "renovate",
-  "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "extends": [
     "config:recommended",
     "group:recommended"
