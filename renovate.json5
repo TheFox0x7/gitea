@@ -4,12 +4,5 @@
     "local>thefox0x7/renovate-config"
   ],
   dependencyDashboardApproval: true,
-  enabled: false,
-  "packageRules": [
-    {
-      "github-actions": {
-        enabled: true
-      }
-    }
-  ]
+  enabledManagers: ["github-actions"],
 }
