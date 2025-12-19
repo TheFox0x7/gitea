@@ -2,7 +2,10 @@
   "username": "renovate",
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "onboarding": true,
-  "dependencyDashboard": true,
+  "extends": [
+    ":dependencyDashboard"
+  ],
+  "dependencyDashboardApproval": true,
   "platform": "github",
   "repositories": [
     "thefox0x7/gitea"
