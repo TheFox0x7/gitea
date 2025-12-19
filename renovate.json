@@ -1,7 +1,0 @@
-{
-  "extends": [
-    "config:recommended",
-    "group:recommended"
-  ],
-  "dependencyDashboardApproval": true
-}
