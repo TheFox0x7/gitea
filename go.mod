@@ -36,7 +36,7 @@ require (
 	github.com/bohde/codel v0.2.0
 	github.com/buildkite/terminal-to-html/v3 v3.16.8
 	github.com/caddyserver/certmagic v0.24.0
-	github.com/charmbracelet/git-lfs-transfer v0.1.1-0.20251013092601-6327009efd21
+	github.com/charmbracelet/git-lfs-transfer v0.1.1-0.20251215100631-79ad53054794
 	github.com/chi-middleware/proxy v1.1.1
 	github.com/dimiro1/reply v0.0.0-20200315094148-d0136a4c9e21
 	github.com/djherbis/buffer v1.2.0
@@ -57,7 +57,7 @@ require (
 	github.com/go-co-op/gocron v1.37.0
 	github.com/go-enry/go-enry/v2 v2.9.2
 	github.com/go-git/go-billy/v5 v5.6.2
-	github.com/go-git/go-git/v5 v5.16.3
+	github.com/go-git/go-git/v5 v5.16.4
 	github.com/go-ldap/ldap/v3 v3.4.11
 	github.com/go-redsync/redsync/v4 v4.13.0
 	github.com/go-sql-driver/mysql v1.9.3
@@ -122,7 +122,7 @@ require (
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/sync v0.18.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.39.0
 	golang.org/x/text v0.31.0
 	google.golang.org/grpc v1.75.0
 	google.golang.org/protobuf v1.36.8
