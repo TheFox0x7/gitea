@@ -68,7 +68,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-github/v74 v74.0.0
 	github.com/google/licenseclassifier/v2 v2.0.0
-	github.com/google/pprof v0.0.0-20250820193118-f64d9cf942d6
+	github.com/google/pprof v0.0.0-20251213031049-b05bdaca462f
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/feeds v1.2.0
 	github.com/gorilla/sessions v1.4.0
