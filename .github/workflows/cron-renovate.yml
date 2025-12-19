@@ -9,11 +9,22 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     steps:
+      - name: Get token
+        id: get_token
+        uses: actions/create-github-app-token@v1
+        with:
+          private-key: ${{ secrets.private_key }}
+          app-id: ${{ secrets.app_id }}
+          owner: ${{ github.repository_owner }}
+          repositories: 'gitea'
+
       - name: Checkout
         uses: actions/checkout@v6
       - name: Run renovate
         uses: renovatebot/github-action@v44.1.0
         with:
           configurationFile: .github/renovate_config.json
-          token: ${{ secrets.RENOVATE_TOKEN }}
+          token: '${{ steps.get_token.outputs.token }}'
+        env:
+          RENOVATE_PLATFORM_COMMIT: 'true'
 
