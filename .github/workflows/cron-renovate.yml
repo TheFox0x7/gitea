@@ -1,14 +1,14 @@
 name: cron-renovate
 
 on:
-  schedule:
-    - cron: "0 1 * * 1" # every Monday at 01:00 UTC
+  # schedule:
+  #   - cron: "0 1 * * 1" # every Monday at 01:00 UTC
   workflow_dispatch:
 
 jobs:
   cron-renovate:
     runs-on: ubuntu-latest
-    if: github.repository == 'go-gitea/gitea' # prevent running on forks
+    if: github.repository == 'thefox0x7/gitea' # prevent running on forks
     permissions:
       contents: read
     steps:
