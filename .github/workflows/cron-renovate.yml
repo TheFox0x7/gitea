@@ -21,3 +21,4 @@ jobs:
           RENOVATE_PLATFORM_COMMIT: "true" # commit directly to branch to avoid API rate limits and for commit signing.
           RENOVATE_BINARY_SOURCE: install # auto-install go/node toolchains needed by post-upgrade tasks.
           RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS: '["^make (tidy|svg)$"]'
+          LOG_LEVEL: "debug"
