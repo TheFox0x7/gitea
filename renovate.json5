@@ -3,7 +3,7 @@
   "extends": ["config:recommended"],
   "enabledManagers": ["github-actions", "gomod", "npm"],
   "labels": ["dependencies"],
-  "branchPrefix": "renovate/",
+  "branchPrefix": "renovate2/",
   "schedule": ["* * * * 1"], // routine PRs Mondays only; vulnerabilityAlerts bypasses this
   "repositories" : ["thefox0x7/gitea"],
   "minimumReleaseAge": "5 days",
