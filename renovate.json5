@@ -5,6 +5,7 @@
   "labels": ["dependencies"],
   "branchPrefix": "renovate/",
   "schedule": ["* * * * 1"], // routine PRs Mondays only; vulnerabilityAlerts bypasses this
+  "repositories" : ["thefox0x7/gitea"],
   "minimumReleaseAge": "5 days",
   "semanticCommits": "enabled",
   "dependencyDashboard": false,
