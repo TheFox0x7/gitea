@@ -11,7 +11,7 @@ require (
 	code.gitea.io/actions-proto-go v0.4.1
 	code.gitea.io/sdk/gitea v0.24.1
 	codeberg.org/gusted/mcaptcha v0.0.0-20220723083913-4f3072e1d570
-	connectrpc.com/connect v1.19.1
+	connectrpc.com/connect v1.19.2
 	gitea.com/go-chi/binding v0.0.0-20260414111559-654cea7ac60a
 	gitea.com/go-chi/cache v0.2.1
 	gitea.com/go-chi/captcha v0.0.0-20240315150714-fb487f629098
@@ -20,8 +20,8 @@ require (
 	gitea.com/lunny/levelqueue v0.4.2-0.20230414023320-3c0159fe0fe4
 	github.com/42wim/httpsig v1.2.4
 	github.com/42wim/sshsig v0.0.0-20260317195500-b9f38cf0d432
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.0
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
 	github.com/Azure/go-ntlmssp v0.1.0
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -34,7 +34,7 @@ require (
 	github.com/bohde/codel v0.2.0
 	github.com/buildkite/terminal-to-html/v3 v3.16.8
 	github.com/caddyserver/certmagic v0.25.2
-	github.com/charmbracelet/git-lfs-transfer v0.1.1-0.20251013092601-6327009efd21
+	github.com/charmbracelet/git-lfs-transfer v0.1.1-0.20260309112543-12416315a635
 	github.com/chi-middleware/proxy v1.1.1
 	github.com/dimiro1/reply v0.0.0-20200315094148-d0136a4c9e21
 	github.com/dlclark/regexp2 v1.12.0
@@ -49,14 +49,14 @@ require (
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
-	github.com/go-co-op/gocron/v2 v2.21.0
+	github.com/go-co-op/gocron/v2 v2.21.1
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/go-git/go-billy/v5 v5.8.0
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/go-redsync/redsync/v4 v4.16.0
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/go-webauthn/webauthn v0.16.5
+	github.com/go-webauthn/webauthn v0.17.0
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f
 	github.com/gogs/go-gogs-client v0.0.0-20210131175652-1d7215cd8d85
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -69,7 +69,7 @@ require (
 	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/huandu/xstrings v1.5.0
-	github.com/jaytaylor/html2text v0.0.0-20230321000545-74c2419ad056
+	github.com/jaytaylor/html2text v0.0.0-20260303211410-1a4bdc82ecec
 	github.com/jhillyerd/enmime/v2 v2.3.0
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/klauspost/compress v1.18.5
@@ -81,7 +81,7 @@ require (
 	github.com/meilisearch/meilisearch-go v0.36.2
 	github.com/mholt/archives v0.1.5
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/microsoft/go-mssqldb v1.9.6
+	github.com/microsoft/go-mssqldb v1.9.7
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/msteinert/pam/v2 v2.1.0
 	github.com/nektos/act v0.2.63
@@ -102,7 +102,7 @@ require (
 	github.com/tstranex/u2f v1.0.0
 	github.com/ulikunitz/xz v0.5.15
 	github.com/urfave/cli-docs/v3 v3.1.0
-	github.com/urfave/cli/v3 v3.4.1
+	github.com/urfave/cli/v3 v3.6.1
 	github.com/wneessen/go-mail v0.7.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yohcop/openid-go v1.0.1
