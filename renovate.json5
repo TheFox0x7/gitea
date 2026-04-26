@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["github-actions", "gomod", "npm"],
+  "labels": ["dependencies"],
+  "branchPrefix": "renovate2/",
+  "schedule": ["* * * * 1"], // routine PRs Mondays only; vulnerabilityAlerts bypasses this
+  "repositories" : ["thefox0x7/gitea"],
+  "minimumReleaseAge": "5 days",
+  "semanticCommits": "enabled",
+  // "dependencyDashboard": false,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+  },
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "groupName": "action dependencies",
+      "matchManagers": ["github-actions"],
+    },
+    {
+      "groupName": "go dependencies",
+      "matchManagers": ["gomod"],
+      "postUpgradeTasks": {
+        "commands": ["make tidy"],
+        "fileFilters": ["go.mod", "go.sum", "assets/go-licenses.json"],
+        "executionMode": "branch",
+      },
+    },
+    {
+      "groupName": "npm dependencies",
+      "matchManagers": ["npm"],
+      "postUpgradeTasks": {
+        "commands": ["make svg"],
+        "fileFilters": ["public/assets/img/svg/**"],
+        "executionMode": "branch",
+      },
+    },
+  ],
+}
