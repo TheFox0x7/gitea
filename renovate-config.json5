@@ -5,6 +5,7 @@
   "labels": ["dependencies"],
   requireConfig: 'optional',
   "branchPrefix": "renovate2/",
+  "repositories" : ["thefox0x7/gitea"],
   "minimumReleaseAge": "5 days",
   "semanticCommits": "enabled",
   // "dependencyDashboard": false,
