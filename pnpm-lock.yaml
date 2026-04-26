@@ -182,8 +182,8 @@ importers:
         specifier: 8.5.10
         version: 8.5.10
       rolldown-license-plugin:
-        specifier: 3.0.1
-        version: 3.0.1(rolldown@1.0.0-rc.16)
+        specifier: 3.0.2
+        version: 3.0.2(rolldown@1.0.0-rc.16)
       sortablejs:
         specifier: 1.15.7
         version: 1.15.7
@@ -215,8 +215,8 @@ importers:
         specifier: 8.0.9
         version: 8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)
       vite-string-plugin:
-        specifier: 2.0.2
-        version: 2.0.2(vite@8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1))
+        specifier: 2.0.3
+        version: 2.0.3(vite@8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1))
       vue:
         specifier: 3.5.32
         version: 3.5.32(typescript@6.0.3)
@@ -339,8 +339,8 @@ importers:
         specifier: 1.8.1
         version: 1.8.1
       spectral-cli-bundle:
-        specifier: 1.0.7
-        version: 1.0.7
+        specifier: 1.0.8
+        version: 1.0.8
       stylelint:
         specifier: 17.8.0
         version: 17.8.0(typescript@6.0.3)
@@ -3560,8 +3560,8 @@ packages:
   robust-predicates@3.0.3:
     resolution: {integrity: sha512-NS3levdsRIUOmiJ8FZWCP7LG3QpJyrs/TE0Zpf1yvZu8cAJJ6QMW92H1c7kWpdIHo8RvmLxN/o2JXTKHp74lUA==}
 
-  rolldown-license-plugin@3.0.1:
-    resolution: {integrity: sha512-0aBIHnHN2xiEXSmTMHFLWYCm3WBExqSbq0y9nr9LKg0JBI8wBy7Y+Nm4oL5JJHgcI4JeRniERVatHqUg2QtMzQ==}
+  rolldown-license-plugin@3.0.2:
+    resolution: {integrity: sha512-ICjjSDyOXzm7S0FYSU7g0eohs35MKk2/IoJLvwMQ9B4EQN2cYI7do+tQaVhL/9brhhNyozgL/+WSqQfbDHT0Vw==}
     peerDependencies:
       rolldown: '*'
 
@@ -3653,8 +3653,8 @@ packages:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
 
-  spectral-cli-bundle@1.0.7:
-    resolution: {integrity: sha512-vIUC0nwv9tYxWV1xHdR3CTVDOEEtLKaDCcQpARZgO0Db7VmSpSWJ4xrnVPNSmO59hBtGwW2CVzHf0OimJBaKAA==}
+  spectral-cli-bundle@1.0.8:
+    resolution: {integrity: sha512-wxHPXFy5bdtqT/flJRjWbSdPoDjIiXzmLvxE7RO9bbs/B2DuavW2UIG8HYa7m7F6RlQaK7rhoiIRoYEEeBP5Jg==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -3920,8 +3920,8 @@ packages:
   vanilla-colorful@0.7.2:
     resolution: {integrity: sha512-z2YZusTFC6KnLERx1cgoIRX2CjPRP0W75N+3CC6gbvdX5Ch47rZkEMGO2Xnf+IEmi3RiFLxS18gayMA27iU7Kg==}
 
-  vite-string-plugin@2.0.2:
-    resolution: {integrity: sha512-pHU9lZuUoMSYyZixdn2XBYko9IAhk3dr41CG6VsXrjB+wN2th06SZsO9mJm6+2NhKBJKNfRERaRej8TBcoq9tQ==}
+  vite-string-plugin@2.0.3:
+    resolution: {integrity: sha512-Qb/qGg38IoR0nHA4gMmrIMYZDObTrrgHlAA5o5jTOzfgEs1NVHnPYoIyxnVx9w0vOHK8o7E90nXGApOqOZzxDA==}
     peerDependencies:
       vite: '*'
 
@@ -7595,7 +7595,7 @@ snapshots:
 
   robust-predicates@3.0.3: {}
 
-  rolldown-license-plugin@3.0.1(rolldown@1.0.0-rc.16):
+  rolldown-license-plugin@3.0.2(rolldown@1.0.0-rc.16):
     dependencies:
       rolldown: 1.0.0-rc.16
 
@@ -7694,7 +7694,7 @@ snapshots:
 
   source-map-js@1.2.1: {}
 
-  spectral-cli-bundle@1.0.7:
+  spectral-cli-bundle@1.0.8:
     optionalDependencies:
       fsevents: 2.3.3
 
@@ -8031,7 +8031,7 @@ snapshots:
 
   vanilla-colorful@0.7.2: {}
 
-  vite-string-plugin@2.0.2(vite@8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)):
+  vite-string-plugin@2.0.3(vite@8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)):
     dependencies:
       vite: 8.0.9(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)
 
