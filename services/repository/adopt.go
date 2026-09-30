@@ -41,6 +41,9 @@ func deleteFailedAdoptRepository(repoID int64) error {
 
 // AdoptRepository adopts pre-existing repository files for the user/organization.
 func AdoptRepository(ctx context.Context, doer, owner *user_model.User, opts CreateRepoOptions) (*repo_model.Repository, error) {
+	if setting.Repository.Layout == setting.RepositoryLayoutHashed {
+		return nil, fmt.Errorf("adopting unadopted repositories is not supported with the hashed repository storage layout")
+	}
 	if !doer.CanCreateRepoIn(owner) {
 		return nil, repo_model.ErrReachLimitOfRepo{
 			Limit: owner.MaxRepoCreation,
@@ -210,6 +213,9 @@ func adoptRepository(ctx context.Context, repo *repo_model.Repository, defaultBr
 
 // DeleteUnadoptedRepository deletes unadopted repository files from the filesystem
 func DeleteUnadoptedRepository(ctx context.Context, doer, u *user_model.User, repoName string) error {
+	if setting.Repository.Layout == setting.RepositoryLayoutHashed {
+		return fmt.Errorf("deleting unadopted repositories is not supported with the hashed repository storage layout")
+	}
 	if err := repo_model.IsUsableRepoName(repoName); err != nil {
 		return err
 	}
@@ -293,6 +299,11 @@ func checkUnadoptedRepositories(ctx context.Context, userName string, repoNamesT
 // ListUnadoptedRepositories lists all the unadopted repositories that match the provided query
 func ListUnadoptedRepositories(ctx context.Context, query string, opts *db.ListOptions) ([]string, int64, error) {
 	opts.SetDefaultValues()
+	// The unadopted repositories feature relies on the name-based legacy repository storage layout.
+	// With the hashed layout, repository paths can't be mapped back to owner/repository names.
+	if setting.Repository.Layout == setting.RepositoryLayoutHashed {
+		return nil, 0, nil
+	}
 	globUser, _ := glob.Compile("*")
 	globRepo, _ := glob.Compile("*")
 

@@ -107,18 +107,24 @@ func RenameUser(ctx context.Context, u *user_model.User, newUserName string, doe
 	}
 
 	// Do not fail if directory does not exist
-	if err = util.RenameWithRetry(gitrepo.UserLocalPath(oldUserName), gitrepo.UserLocalPath(newUserName)); err != nil && !os.IsNotExist(err) {
-		u.Name = oldUserName
-		u.LowerName = strings.ToLower(oldUserName)
-		return fmt.Errorf("rename user directory: %w", err)
+	// In the hashed repository storage layout, repository paths don't depend on the user name,
+	// so no directory rename is needed.
+	if setting.Repository.Layout != setting.RepositoryLayoutHashed {
+		if err = util.RenameWithRetry(gitrepo.UserLocalPath(oldUserName), gitrepo.UserLocalPath(newUserName)); err != nil && !os.IsNotExist(err) {
+			u.Name = oldUserName
+			u.LowerName = strings.ToLower(oldUserName)
+			return fmt.Errorf("rename user directory: %w", err)
+		}
 	}
 
 	if err = committer.Commit(); err != nil {
 		u.Name = oldUserName
 		u.LowerName = strings.ToLower(oldUserName)
-		if err2 := util.RenameWithRetry(gitrepo.UserLocalPath(newUserName), gitrepo.UserLocalPath(oldUserName)); err2 != nil && !os.IsNotExist(err2) {
-			log.Error("Unable to rollback directory change during failed username change from: %s to: %s. DB Error: %v. Filesystem Error: %v", oldUserName, newUserName, err, err2)
-			return fmt.Errorf("failed to rollback directory change during failed username change from: %s to: %s. DB Error: %w. Filesystem Error: %v", oldUserName, newUserName, err, err2)
+		if setting.Repository.Layout != setting.RepositoryLayoutHashed {
+			if err2 := util.RenameWithRetry(gitrepo.UserLocalPath(newUserName), gitrepo.UserLocalPath(oldUserName)); err2 != nil && !os.IsNotExist(err2) {
+				log.Error("Unable to rollback directory change during failed username change from: %s to: %s. DB Error: %v. Filesystem Error: %v", oldUserName, newUserName, err, err2)
+				return fmt.Errorf("failed to rollback directory change during failed username change from: %s to: %s. DB Error: %w. Filesystem Error: %v", oldUserName, newUserName, err, err2)
+			}
 		}
 		return err
 	}

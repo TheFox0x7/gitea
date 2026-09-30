@@ -9,6 +9,7 @@ import (
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
 	"gitea.dev/modules/git/gitrepo"
+	"gitea.dev/modules/setting"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -16,12 +17,19 @@ import (
 func TestRepository_GitRepo(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-
 	assert.Equal(t, "user2/repo1.git", gitrepo.CodeRepoByName(repo.OwnerName, repo.Name).GitRepoLocation())
 	assert.Equal(t, "user2/repo1.git", repo.CodeStorageRepo().GitRepoLocation())
 	assert.Equal(t, "repo-1", repo.CodeStorageRepo().GitRepoManagedID())
-
 	assert.Equal(t, "user2/repo1.wiki.git", gitrepo.WikiRepoByName(repo.OwnerName, repo.Name).GitRepoLocation())
 	assert.Equal(t, "user2/repo1.wiki.git", repo.WikiStorageRepo().GitRepoLocation())
 	assert.Equal(t, "repo-wiki-1", repo.WikiStorageRepo().GitRepoManagedID())
+}
+
+func TestRepository_GitRepoHashedLayout(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	setting.Repository.Layout = setting.RepositoryLayoutHashed
+	defer func() { setting.Repository.Layout = setting.RepositoryLayoutLegacy }()
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	assert.Equal(t, gitrepo.RepoCodeGitRepoRelativePathByID(1), repo.CodeStorageRepo().GitRepoLocation())
+	assert.Equal(t, gitrepo.RepoWikiGitRepoRelativePathByID(1), repo.WikiStorageRepo().GitRepoLocation())
 }

@@ -18,6 +18,12 @@ const (
 	RepoCreatingPublic             = "public"
 )
 
+// enumerates the values for [repository] LAYOUT
+const (
+	RepositoryLayoutLegacy = "legacy"
+	RepositoryLayoutHashed = "hashed"
+)
+
 // enumerates the values for [repository.pull-request] DEFAULT_TITLE_SOURCE
 const (
 	RepoPRTitleSourceFirstCommit = "first-commit"
@@ -31,6 +37,7 @@ const ItemsPerPage = 40
 // Repository settings
 var (
 	Repository = struct {
+		Layout                                  string
 		DetectedCharsetsOrder                   []string
 		DetectedCharsetScore                    map[string]int `ini:"-"`
 		AnsiCharset                             string
@@ -128,6 +135,7 @@ var (
 			TrustedSSHKeys    []string `ini:"TRUSTED_SSH_KEYS"`
 		} `ini:"repository.signing"`
 	}{
+		Layout:                                  RepositoryLayoutLegacy,
 		DetectedCharsetsOrder:                   DefaultDetectedCharsetsOrder(),
 		DetectedCharsetScore:                    map[string]int{},
 		AnsiCharset:                             "",
@@ -301,6 +309,12 @@ func loadRepositoryFrom(rootCfg ConfigProvider) {
 	var err error
 	// Determine and create root git repository path.
 	sec := rootCfg.Section("repository")
+	Repository.Layout = sec.Key("LAYOUT").MustString(RepositoryLayoutLegacy)
+	switch Repository.Layout {
+	case RepositoryLayoutLegacy, RepositoryLayoutHashed:
+	default:
+		log.Fatal("Unsupported [repository] LAYOUT %q (supported: %s, %s)", Repository.Layout, RepositoryLayoutLegacy, RepositoryLayoutHashed)
+	}
 	Repository.DisableHTTPGit = sec.Key("DISABLE_HTTP_GIT").MustBool()
 	Repository.UseCompatSSHURI = sec.Key("USE_COMPAT_SSH_URI").MustBool()
 	Repository.GoGetCloneURLProtocol = sec.Key("GO_GET_CLONE_URL_PROTOCOL").MustString("https")
