@@ -22,6 +22,7 @@ import (
 	"gitea.dev/modules/git/gitrepo"
 	"gitea.dev/modules/globallock"
 	"gitea.dev/modules/log"
+	"gitea.dev/modules/setting"
 	"gitea.dev/modules/util"
 	"gitea.dev/services/audit"
 	notify_service "gitea.dev/services/notify"
@@ -306,24 +307,28 @@ func transferOwnership(ctx context.Context, doer *user_model.User, newOwnerName 
 	}
 
 	// Rename remote repository to new path and delete local copy.
-	oldCodeRepo := gitrepo.CodeRepoByName(oldOwner.Name, repo.Name)
-	newCodeRepo := gitrepo.CodeRepoByName(newOwner.Name, repo.Name)
-	if err := git.RenameRepository(ctx, oldCodeRepo, newCodeRepo); err != nil {
-		return fmt.Errorf("rename repository directory: %w", err)
-	}
-	repoRenamed = true
-
-	// Rename remote wiki repository to new path and delete local copy.
-	oldWikiRepo := gitrepo.WikiRepoByName(oldOwner.Name, repo.Name)
-	if isExist, err := git.IsRepositoryExist(ctx, oldWikiRepo); err != nil {
-		log.Error("Unable to check if wiki of repo %s/%s exists. Error: %v", oldOwner.Name, repo.Name, err)
-		return err
-	} else if isExist {
-		newWikiRepo := gitrepo.WikiRepoByName(newOwner.Name, repo.Name)
-		if err := git.RenameRepository(ctx, oldWikiRepo, newWikiRepo); err != nil {
-			return fmt.Errorf("rename repository wiki: %w", err)
+	// In the hashed storage layout, the on-disk path only depends on the repository ID,
+	// so no disk rename is needed when transferring.
+	if setting.Repository.Layout != setting.RepositoryLayoutHashed {
+		oldCodeRepo := gitrepo.CodeRepoByName(oldOwner.Name, repo.Name)
+		newCodeRepo := gitrepo.CodeRepoByName(newOwner.Name, repo.Name)
+		if err := git.RenameRepository(ctx, oldCodeRepo, newCodeRepo); err != nil {
+			return fmt.Errorf("rename repository directory: %w", err)
 		}
-		wikiRenamed = true
+		repoRenamed = true
+
+		// Rename remote wiki repository to new path and delete local copy.
+		oldWikiRepo := gitrepo.WikiRepoByName(oldOwner.Name, repo.Name)
+		if isExist, err := git.IsRepositoryExist(ctx, oldWikiRepo); err != nil {
+			log.Error("Unable to check if wiki of repo %s/%s exists. Error: %v", oldOwner.Name, repo.Name, err)
+			return err
+		} else if isExist {
+			newWikiRepo := gitrepo.WikiRepoByName(newOwner.Name, repo.Name)
+			if err := git.RenameRepository(ctx, oldWikiRepo, newWikiRepo); err != nil {
+				return fmt.Errorf("rename repository wiki: %w", err)
+			}
+			wikiRenamed = true
+		}
 	}
 
 	if err := repo_model.DeleteRepositoryTransfer(ctx, repo.ID); err != nil {
@@ -387,15 +392,17 @@ func changeRepositoryName(ctx context.Context, repo *repo_model.Repository, newR
 		}
 	}
 
-	newCodeRepo := gitrepo.CodeRepoByName(repo.OwnerName, newRepoName)
-	if err = git.RenameRepository(ctx, repo, newCodeRepo); err != nil {
-		return fmt.Errorf("rename repository directory: %w", err)
-	}
+	if setting.Repository.Layout != setting.RepositoryLayoutHashed {
+		newCodeRepo := gitrepo.CodeRepoByName(repo.OwnerName, newRepoName)
+		if err = git.RenameRepository(ctx, repo, newCodeRepo); err != nil {
+			return fmt.Errorf("rename repository directory: %w", err)
+		}
 
-	if HasWiki(ctx, repo) {
-		newWikiRepo := gitrepo.WikiRepoByName(repo.OwnerName, newRepoName)
-		if err = git.RenameRepository(ctx, repo.WikiStorageRepo(), newWikiRepo); err != nil {
-			return fmt.Errorf("rename repository wiki: %w", err)
+		if HasWiki(ctx, repo) {
+			newWikiRepo := gitrepo.WikiRepoByName(repo.OwnerName, newRepoName)
+			if err = git.RenameRepository(ctx, repo.WikiStorageRepo(), newWikiRepo); err != nil {
+				return fmt.Errorf("rename repository wiki: %w", err)
+			}
 		}
 	}
 

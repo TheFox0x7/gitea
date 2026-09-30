@@ -350,6 +350,11 @@ func CheckCreateRepository(ctx context.Context, doer, owner *user_model.User, na
 	} else if has {
 		return repo_model.ErrRepoAlreadyExist{Uname: owner.Name, Name: name}
 	}
+	// In the hashed storage layout, the on-disk path depends on the repository ID which
+	// is not known before creation, so there is no legacy-named directory to check.
+	if setting.Repository.Layout == setting.RepositoryLayoutHashed {
+		return nil
+	}
 	repo := gitrepo.CodeRepoByName(owner.Name, name)
 	isExist, err := git.IsRepositoryExist(ctx, repo)
 	if err != nil {
