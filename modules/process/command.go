@@ -14,6 +14,7 @@ type Cmd struct {
 
 	onCancelUserFunc func() error
 	termGraceful     bool
+	cgroupKey        string
 }
 
 func (c *Cmd) WithOnCancelGracefully(userFunc func() error) *Cmd {
@@ -28,6 +29,13 @@ func (c *Cmd) WithOnCancelForceKill(userFunc func() error) *Cmd {
 
 func (c *Cmd) WithDir(dir string) *Cmd {
 	c.Cmd.Dir = dir
+	return c
+}
+
+// WithCgroupKey assigns the command to a cgroup bucket derived from key.
+// It is a no-op when cgroup management is not active.
+func (c *Cmd) WithCgroupKey(key string) *Cmd {
+	c.cgroupKey = key
 	return c
 }
 
@@ -51,4 +59,17 @@ func CommandContext(ctx context.Context, name string, arg ...string) *Cmd {
 	// If some processes don't respond to SIGTERM, can switch to WithOnCancelForceKill (SIGKILL) to force kill them.
 	c.termGraceful = true
 	return c
+}
+
+// Start starts the command, assigning it to a cgroup before it runs when possible.
+func (c *Cmd) Start() error {
+	closer, err := prepareCgroup(c)
+	defer closer()
+	if err != nil {
+		return err
+	}
+	if err = c.Cmd.Start(); err != nil {
+		return err
+	}
+	return addToCgroup(c)
 }

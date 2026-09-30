@@ -84,6 +84,16 @@ func loadGitFrom(rootCfg ConfigProvider) {
 	if err := sec.MapTo(&Git); err != nil {
 		log.Fatal("Failed to map Git settings: %v", err)
 	}
+	secCgroups := rootCfg.Section("git.cgroups")
+	if err := secCgroups.MapTo(&GitCgroups); err != nil {
+		log.Fatal("Failed to map Git cgroups settings: %v", err)
+	}
+	if GitCgroups.MemoryPerBucket <= 0 {
+		GitCgroups.MemoryPerBucket = 512 * 1024 * 1024
+	}
+	if GitCgroups.MaxBuckets <= 0 {
+		GitCgroups.MaxBuckets = 50
+	}
 
 	secGitConfig := rootCfg.Section("git.config")
 	GitConfig.Options = make(map[string]string)

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"gitea.dev/modules/cgroup"
 	"gitea.dev/modules/process"
 	"gitea.dev/modules/util/rotatingfilewriter"
 )
@@ -23,6 +24,8 @@ func init() {
 	}
 
 	rotatingfilewriter.ErrorPrintf = FallbackErrorf
+	cgroup.LogError = func(format string, args ...any) { Log(2, ERROR, format, args...) }
+	process.CgroupLogWarn = func(format string, args ...any) { Log(2, WARN, format, args...) }
 
 	process.TraceCallback = func(skip int, start bool, pid process.IDType, description string, parentPID process.IDType, typ string) {
 		if start && parentPID != "" {

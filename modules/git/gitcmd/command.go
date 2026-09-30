@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -463,6 +465,8 @@ func (c *Command) Start(ctx context.Context) (retErr error) {
 		c.closePipeFiles(c.parentPipeFiles)
 		return nil
 	})
+	// TODO: assign by repository identity (e.g. repository id hash) once available here, random for now
+	c.cmd.WithCgroupKey(strconv.FormatUint(rand.Uint64(), 16))
 	return c.cmd.Start()
 }
 
