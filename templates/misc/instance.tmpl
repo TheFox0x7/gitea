@@ -1,0 +1,84 @@
+{{template "base/head" .}}
+	<div role="main" aria-label="{{.Title}}" class="page-content">
+		<div class="ui container">
+			<h4 class="ui top attached header">
+				{{ctx.Locale.Tr "misc.instance_info"}}
+			</h4>
+			<div class="ui attached segment">
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.version"}}:</strong>
+					<span>{{.AppVer}} {{.AppBuiltWith}}</span>
+				</div>
+			</div>
+			<h4 class="ui top attached header">
+				{{svg "octicon-terminal"}} {{ctx.Locale.Tr "misc.instance_info.ssh"}}
+			</h4>
+			<div class="ui attached segment">
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.ssh_enabled"}}:</strong>
+					<span>{{svg (Iif .SSHEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+				{{if .SSHEnabled}}
+					<div class="ui divider"></div>
+					<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+						<strong>{{ctx.Locale.Tr "misc.instance_info.ssh_domain"}}:</strong>
+						<span>{{.SSHCloneDomain}}</span>
+					</div>
+					<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+						<strong>{{ctx.Locale.Tr "misc.instance_info.ssh_port"}}:</strong>
+						<span>{{.SSHClonePort}}</span>
+					</div>
+					<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+						<strong>{{ctx.Locale.Tr "misc.instance_info.ssh_user"}}:</strong>
+						<span>{{.SSHCloneUser}}</span>
+					</div>
+					<div class="ui divider"></div>
+					<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+						<strong>{{ctx.Locale.Tr "misc.instance_info.ssh_host_keys"}}:</strong>
+					</div>
+					{{if .SSHHostKeys}}
+						{{range .SSHHostKeys}}
+							<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center tw-font-mono">
+								<span>{{.Algorithm}}</span>
+								<span>{{.Fingerprint}}</span>
+							</div>
+						{{end}}
+					{{else}}
+						<span>{{ctx.Locale.Tr "misc.instance_info.ssh_host_keys.none"}}</span>
+					{{end}}
+				{{end}}
+			</div>
+			<h4 class="ui top attached header">
+				{{svg "octicon-list-unordered"}} {{ctx.Locale.Tr "misc.instance_info.features"}}
+			</h4>
+			<div class="ui attached segment">
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.features.actions"}}:</strong>
+					<span>{{svg (Iif .ActionsEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+				<div class="ui divider"></div>
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.features.packages"}}:</strong>
+					<span>{{svg (Iif .PackagesEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+				<div class="ui divider"></div>
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.features.lfs"}}:</strong>
+					<span>{{svg (Iif .LFSEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+				<div class="ui divider"></div>
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.features.mail"}}:</strong>
+					<span>{{svg (Iif .MailEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+				<div class="ui divider"></div>
+				<div class="tw-flex tw-flex-wrap tw-gap-2 tw-items-center">
+					<strong>{{ctx.Locale.Tr "misc.instance_info.features.federation"}}:</strong>
+					<span>{{svg (Iif .FederationEnabled "octicon-check" "octicon-x")}}</span>
+				</div>
+			</div>
+			<div class="ui divider"></div>
+			<p>{{ctx.Locale.Tr "misc.instance_info.docs" "https://docs.gitea.com"}}</p>
+		</div>
+	</div>
+{{template "base/footer" .}}
