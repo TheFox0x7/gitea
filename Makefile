@@ -9,7 +9,6 @@ EDITORCONFIG_CHECKER_PACKAGE ?= github.com/editorconfig-checker/editorconfig-che
 GOLANGCI_LINT_PACKAGE ?= github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 # renovate: datasource=go
 GXZ_PACKAGE ?= github.com/ulikunitz/xz/cmd/gxz@v0.5.17 # renovate: datasource=go
 MISSPELL_PACKAGE ?= github.com/golangci/misspell/cmd/misspell@v0.8.0 # renovate: datasource=go
-SWAGGER_PACKAGE ?= github.com/go-swagger/go-swagger/cmd/swagger@v0.36.6 # renovate: datasource=go
 GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1.8.0 # renovate: datasource=go
 ACTIONLINT_PACKAGE ?= github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 # renovate: datasource=go
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d # renovate: datasource=docker
@@ -146,8 +145,6 @@ GO_SOURCES += $(GENERATED_GO_DEST)
 ESLINT_CONCURRENCY ?= 2
 ESLINT_ARGS := --color --max-warnings=0 --concurrency $(ESLINT_CONCURRENCY)
 
-SWAGGER_EXCLUDE := gitea.dev/sdk
-SWAGGER_SPEC_INPUT := templates/swagger/v1-input.json
 SWAGGER_SPEC := templates/swagger/v1-swagger.generated.json
 OPENAPI3_SPEC := templates/swagger/v1-openapi3.generated.json
 
@@ -225,16 +222,12 @@ TAGS_PREREQ := $(TAGS_EVIDENCE)
 endif
 
 .PHONY: generate-swagger
-generate-swagger: $(SWAGGER_SPEC) $(OPENAPI3_SPEC) ## generate the swagger spec from code comments
-
-$(SWAGGER_SPEC): $(GO_SOURCES) $(SWAGGER_SPEC_INPUT)
-	@output="$$($(GO) run $(SWAGGER_PACKAGE) generate spec --enable-allof-compounding --skip-enum-desc --exclude "$(SWAGGER_EXCLUDE)" --input "$(SWAGGER_SPEC_INPUT)" --output './$(SWAGGER_SPEC)' 2>&1)" || { printf '%s\n' "$$output" >&2; exit 1; }; \
-	warnings="$$(printf '%s\n' "$$output" | grep -v '^go: ')"; \
-	if [ -n "$$warnings" ]; then printf '%s\n' "$$warnings" >&2; exit 1; fi
+generate-swagger: ## generate the OpenAPI 3 and Swagger 2 specs from the API route table
+	@$(GO) run build/generate-openapi-routes.go
 
 .PHONY: swagger-check
 swagger-check: generate-swagger
-	@diff=$$(git diff --color=always '$(SWAGGER_SPEC)'); \
+	@diff=$$(git diff --color=always '$(SWAGGER_SPEC)' '$(OPENAPI3_SPEC)'); \
 	if [ -n "$$diff" ]; then \
 		echo "Please run 'make generate-swagger' and commit the result:"; \
 		printf "%s" "$${diff}"; \
@@ -242,26 +235,14 @@ swagger-check: generate-swagger
 	fi
 
 .PHONY: swagger-validate
-swagger-validate: ## check if the swagger spec is valid
-	@# ensure no warnings
-	@output="$$($(GO) run $(SWAGGER_PACKAGE) validate './$(SWAGGER_SPEC)' 2>&1)"; status=$$?; \
-	printf '%s\n' "$$output" | grep -v '^go: '; \
-	case "$$output" in *WARNING:*) exit 1;; esac; exit $$status
+swagger-validate: ## check both projected specs are valid (route table is the single source)
+	@$(GO) test -run '^TestOpenAPIRouterMounts$$' ./routers/api/v1/
 
 .PHONY: generate-openapi3
-generate-openapi3: $(OPENAPI3_SPEC) ## generate the OpenAPI 3.0 spec from the Swagger 2.0 spec
-
-$(OPENAPI3_SPEC): $(SWAGGER_SPEC) build/generate-openapi.go $(wildcard build/openapi3gen/*.go)
-	$(GO) run build/generate-openapi.go
+generate-openapi3: generate-swagger ## generate the OpenAPI 3.0 spec from the route table
 
 .PHONY: openapi3-check
-openapi3-check: generate-openapi3
-	@diff=$$(git diff --color=always '$(OPENAPI3_SPEC)'); \
-	if [ -n "$$diff" ]; then \
-		echo "Please run 'make generate-openapi3' and commit the result:"; \
-		printf "%s" "$${diff}"; \
-		exit 1; \
-	fi
+openapi3-check: swagger-check
 
 .PHONY: checks
 checks: checks-frontend checks-backend ## run various consistency checks
@@ -584,7 +565,6 @@ deps-tools: ## install tool dependencies
 	$(GO) install $(GOLANGCI_LINT_PACKAGE) & \
 	$(GO) install $(GXZ_PACKAGE) & \
 	$(GO) install $(MISSPELL_PACKAGE) & \
-	$(GO) install $(SWAGGER_PACKAGE) & \
 	$(GO) install $(GOVULNCHECK_PACKAGE) & \
 	$(GO) install $(ACTIONLINT_PACKAGE) & \
 	wait
