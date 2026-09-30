@@ -156,6 +156,16 @@ func TestDetectContentTypeAvif(t *testing.T) {
 	assert.Equal(t, MimeTypeImageAvif, st.contentType)
 }
 
+func TestDetectContentTypeJxl(t *testing.T) {
+	// raw codestream
+	st := DetectContentType([]byte("\xff\x0a........"))
+	assert.Equal(t, MimeTypeImageJxl, st.contentType)
+
+	// ISOBMFF-style container
+	st = DetectContentType([]byte("\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a"))
+	assert.Equal(t, MimeTypeImageJxl, st.contentType)
+}
+
 func TestDetectContentTypeIncorrectFont(t *testing.T) {
 	s := "Stupid Golang keep detecting 34th LP as font"
 	// They don't want to have any improvement to it: https://github.com/golang/go/issues/77172
