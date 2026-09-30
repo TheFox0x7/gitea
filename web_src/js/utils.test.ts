@@ -127,7 +127,7 @@ test('formatBytes', () => {
 
 test('file detection', () => {
   const type = null;
-  for (const name of ['a.avif', 'a.jpg', '/a.jpeg', '.file.png', '.webp', 'file.svg']) {
+  for (const name of ['a.avif', 'a.jxl', 'a.jpg', '/a.jpeg', '.file.png', '.webp', 'file.svg']) {
     expect(isImageFile({name, type})).toBeTruthy();
   }
   for (const name of ['', 'a.jpg.x', '/path.png/x', 'webp']) {
