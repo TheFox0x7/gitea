@@ -182,6 +182,7 @@ func InitFull() (err error) {
 	if err = InitSimple(); err != nil {
 		return err
 	}
+	setupGitCgroups() //nolint:contextcheck
 	return syncGitConfig(context.Background())
 }
 
