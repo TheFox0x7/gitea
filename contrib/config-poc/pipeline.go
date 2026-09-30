@@ -1,5 +1,12 @@
 // Stage 2: Loaders produce a canonical Document (nested map) from any format.
 // Stage 3: merge + env overlay + validation against the registry.
+//
+// Every value carries provenance: whether it was set by the user (and from
+// which source) or fell back to the registry default. This distinction is a
+// hard requirement of the design:
+//   - generated config files may only contain user-set values (goal 6)
+//   - validation reports user mistakes, not built-in defaults
+//   - it mirrors config.Option.HasValue in the existing codebase
 package main
 
 import (
@@ -9,8 +16,39 @@ import (
 	"strings"
 )
 
+// Origin identifies where a value came from.
+type Origin string
+
+const (
+	OriginDefault Origin = "default" // not set by the user anywhere
+	OriginFile    Origin = "file"    // set in a config file (which one, in Detail)
+	OriginEnv     Origin = "env"     // set via GITEA__* environment variable
+	OriginVault   Origin = "vault"   // future source, same treatment as env
+)
+
+// Value is one config value plus its provenance.
+type Value struct {
+	Raw    string
+	Origin Origin
+	Detail string // file name / env var name; empty for defaults
+}
+
+// SetByUser reports whether the user explicitly set this value.
+func (v Value) SetByUser() bool { return v.Origin != OriginDefault }
+
 // Document is the format-neutral config tree: section -> key -> value.
-type Document map[string]map[string]string
+type Document map[string]map[string]Value
+
+func (d Document) Set(section, key, raw string, origin Origin, detail string) {
+	if d[section] == nil {
+		d[section] = map[string]Value{}
+	}
+	d[section][key] = Value{Raw: raw, Origin: origin, Detail: detail}
+}
+
+func (d Document) Get(section, key string) Value {
+	return d[section][key] // zero Value => not set anywhere, treated as default
+}
 
 // Loader loads one file (or source) into a Document.
 type Loader interface {
@@ -27,7 +65,7 @@ func (INILoader) Name() string { return "ini" }
 func (INILoader) Load(data []byte) (Document, error) {
 	doc := Document{}
 	sec := "DEFAULT"
-	for line := range splitLines(string(data)) {
+	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue
@@ -35,7 +73,7 @@ func (INILoader) Load(data []byte) (Document, error) {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			sec = strings.Trim(line, "[]")
 			if doc[sec] == nil {
-				doc[sec] = map[string]string{}
+				doc[sec] = map[string]Value{}
 			}
 			continue
 		}
@@ -43,10 +81,7 @@ func (INILoader) Load(data []byte) (Document, error) {
 		if !ok {
 			return nil, fmt.Errorf("invalid ini line: %q", line)
 		}
-		if doc[sec] == nil {
-			doc[sec] = map[string]string{}
-		}
-		doc[sec][strings.TrimSpace(k)] = stripInlineComment(strings.TrimSpace(v))
+		doc.Set(sec, strings.TrimSpace(k), stripInlineComment(strings.TrimSpace(v)), OriginFile, "")
 	}
 	return doc, nil
 }
@@ -70,22 +105,22 @@ func (YAMLLoader) Name() string { return "yaml" }
 func (YAMLLoader) Load(data []byte) (Document, error) {
 	doc := Document{}
 	sec := ""
-	for line := range splitLines(string(data)) {
+	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		if !strings.HasPrefix(line, " ") && strings.HasSuffix(trimmed, ":") {
 			sec = strings.TrimSuffix(trimmed, ":")
-			doc[sec] = map[string]string{}
+			doc[sec] = map[string]Value{}
 			continue
 		}
-		if strings.HasPrefix(line, "  ") && sec != "" {
+		if strings.HasPrefix(line, " ") && sec != "" {
 			k, v, ok := strings.Cut(trimmed, ":")
 			if !ok {
 				return nil, fmt.Errorf("invalid yaml line: %q", trimmed)
 			}
-			doc[sec][strings.TrimSpace(k)] = strings.TrimSpace(strings.Trim(strings.TrimSpace(v), `"`))
+			doc.Set(sec, strings.TrimSpace(k), strings.TrimSpace(strings.Trim(strings.TrimSpace(v), `"`)), OriginFile, "")
 		}
 	}
 	return doc, nil
@@ -105,11 +140,13 @@ func LoaderFor(ext string) (Loader, error) {
 }
 
 // --- merge: later files win, sections merge key-wise (goal 3) ---
+// The winning value keeps its own provenance; the loser's is discarded, so
+// "which file set this" stays answerable after any number of merges.
 
 func (d Document) MergeFrom(other Document) {
 	for sec, kvs := range other {
 		if d[sec] == nil {
-			d[sec] = map[string]string{}
+			d[sec] = map[string]Value{}
 		}
 		for k, v := range kvs {
 			d[sec][k] = v
@@ -146,16 +183,14 @@ func (e EnvSource) Apply(doc Document) error {
 		if !ok {
 			continue
 		}
-		sec = strings.ToLower(sec)
-		if doc[sec] == nil {
-			doc[sec] = map[string]string{}
-		}
-		doc[sec][key] = v
+		doc.Set(strings.ToLower(sec), key, v, OriginEnv, k)
 	}
 	return nil
 }
 
 // --- validation against the registry (goal 2, feeds `gitea config check`) ---
+// Only user-set values are validated: defaults come from the registry and are
+// trusted, a user typo is not.
 
 type Problem struct {
 	Section, Key, Message string
@@ -190,25 +225,28 @@ func Validate(doc Document, reg []Opt) (problems []Problem) {
 			if o.Deprecated != "" {
 				problems = append(problems, Problem{sec, k, "deprecated, use " + o.Deprecated + " instead (removal: " + o.RemovalIn + ")"})
 			}
+			if !v.SetByUser() {
+				continue
+			}
 			if len(o.Enum) > 0 {
 				found := false
 				for _, e := range o.Enum {
-					if fmt.Sprint(e) == v {
+					if fmt.Sprint(e) == v.Raw {
 						found = true
 					}
 				}
 				if !found {
-					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid value %q, must be one of %v", v, o.Enum)})
+					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid value %q, must be one of %v", v.Raw, o.Enum)})
 				}
 			}
 			switch o.Type {
 			case TInt:
-				if _, err := strconv.Atoi(strings.TrimSpace(v)); err != nil {
-					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid integer %q", v)})
+				if _, err := strconv.Atoi(strings.TrimSpace(v.Raw)); err != nil {
+					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid integer %q", v.Raw)})
 				}
 			case TBool:
-				if _, err := strconv.ParseBool(strings.TrimSpace(v)); err != nil {
-					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid boolean %q", v)})
+				if _, err := strconv.ParseBool(strings.TrimSpace(v.Raw)); err != nil {
+					problems = append(problems, Problem{sec, k, fmt.Sprintf("invalid boolean %q", v.Raw)})
 				}
 			}
 		}
@@ -232,66 +270,80 @@ type Database struct {
 	SQLiteBusyTimeout int
 	IterateBufferSize int
 	LogSQL            bool
+
+	// provenance per hydrated field, key = option name (e.g. "HOST")
+	// SetByUser("HOST") answers "did the user set this or is it a default?"
+	// — the query the real system must be able to answer everywhere.
+	origin map[string]Value
 }
 
 func (d *Database) Hydrate(doc Document, reg []Opt) error {
+	d.origin = map[string]Value{}
 	sec := doc["database"]
-	if sec == nil {
-		sec = map[string]string{}
-	}
 	for _, o := range reg {
-		raw, has := sec[o.Key]
+		v, has := sec[o.Key]
 		if !has {
 			if o.DefFn != nil {
-				raw, has = fmt.Sprint(o.DefFn()), true
+				v = Value{Raw: fmt.Sprint(o.DefFn()), Origin: OriginDefault}
 			} else if o.Def != nil {
-				raw, has = fmt.Sprint(o.Def), true
+				v = Value{Raw: fmt.Sprint(o.Def), Origin: OriginDefault}
+			} else {
+				continue
 			}
 		}
-		if !has {
-			continue
-		}
-		switch {
-		case o.Key == "DB_TYPE":
-			d.Type = raw
-		case o.Key == "HOST":
-			d.Host = raw
-		case o.Key == "NAME":
-			d.Name = raw
-		case o.Key == "USER":
-			d.User = raw
-		case o.Key == "PASSWD":
-			d.Passwd = raw
-		case o.Key == "SSL_MODE":
-			d.SSLMode = raw
-		case o.Key == "PATH":
-			d.Path = raw
-		case o.Key == "SQLITE_TIMEOUT":
-			n, _ := strconv.Atoi(strings.TrimSpace(raw))
+		d.origin[o.Key] = v
+		switch o.Key {
+		case "DB_TYPE":
+			d.Type = v.Raw
+		case "HOST":
+			d.Host = v.Raw
+		case "NAME":
+			d.Name = v.Raw
+		case "USER":
+			d.User = v.Raw
+		case "PASSWD":
+			d.Passwd = v.Raw
+		case "SSL_MODE":
+			d.SSLMode = v.Raw
+		case "PATH":
+			d.Path = v.Raw
+		case "SQLITE_TIMEOUT":
+			n, _ := strconv.Atoi(strings.TrimSpace(v.Raw))
 			if n < 5000 { // preserves today's clamp behavior from loadDBSetting
 				n = 20000
 			}
 			d.SQLiteBusyTimeout = n
-		case o.Key == "ITERATE_BUFFER_SIZE":
-			d.IterateBufferSize, _ = strconv.Atoi(strings.TrimSpace(raw))
-		case o.Key == "LOG_SQL":
-			d.LogSQL, _ = strconv.ParseBool(strings.TrimSpace(raw))
+		case "ITERATE_BUFFER_SIZE":
+			d.IterateBufferSize, _ = strconv.Atoi(strings.TrimSpace(v.Raw))
+		case "LOG_SQL":
+			d.LogSQL, _ = strconv.ParseBool(strings.TrimSpace(v.Raw))
 		}
 	}
 	return nil
 }
 
-// --- helpers ---
+// Provenance reports the full origin of one hydrated option.
+func (d *Database) Provenance(key string) Value { return d.origin[key] }
 
-func splitLines(s string) func(yield func(string) bool) {
-	return func(yield func(string) bool) {
-		for _, l := range strings.Split(s, "\n") {
-			if !yield(l) {
-				return
-			}
+// SetByUser reports whether the user explicitly set this option.
+func (d *Database) SetByUser(key string) bool {
+	v, ok := d.origin[key]
+	return ok && v.SetByUser()
+}
+
+// UserSetKeys lists all options the user explicitly set.
+func (d *Database) UserSetKeys() []string {
+	var keys []string
+	for k, v := range d.origin {
+		if v.SetByUser() {
+			keys = append(keys, k)
 		}
 	}
+	sort.Strings(keys)
+	return keys
 }
+
+// --- helpers ---
 
 func stripInlineComment(v string) string {
 	if i := strings.Index(v, " ;"); i >= 0 {

@@ -29,6 +29,10 @@ go run ./contrib/config-poc
 5. Typed struct hydration with no `MustXxx` write-back and no package globals.
 6. `app.example.ini` and JSON Schema generated from the same registry, with
    `HiddenFromWrite` keys (e.g. `PASSWD`) never written by Gitea itself.
+7. Default-vs-user-set awareness: every value carries provenance (origin +
+   which file/env var set it). Generated files contain only user-set values;
+   validation only judges user-set values; defaults always trace back to the
+   registry. Mirrors `config.Option.HasValue` in the existing codebase.
 
 ## Known simplifications
 

@@ -96,6 +96,19 @@ func genJSONSchema(reg []Opt) string {
 	return b.String()
 }
 
+// genUserConfig renders ONLY the user-set values — the output a real
+// `gitea config` would write to a generated/derived file (goal 6): defaults
+// never appear, because they live in the registry, not in user files.
+func genUserConfig(db *Database) string {
+	var b strings.Builder
+	b.WriteString("; Generated file: contains only values you set yourself.\n")
+	b.WriteString("[database]\n")
+	for _, k := range db.UserSetKeys() {
+		fmt.Fprintf(&b, "%s = %s\n", k, db.Provenance(k).Raw)
+	}
+	return b.String()
+}
+
 func schemaType(t OptType) string {
 	switch t {
 	case TInt, TDuration:
@@ -140,7 +153,6 @@ LOG_SQL = true
 		{"override.toml", ".toml", `
 [database]
 HOST = db.internal:5432 ; override just the host
-CHARSET_COLLATION = ; typo'd comment style, ignored
 `},
 		{"extra.yaml", ".yaml", `
 database:
@@ -159,7 +171,7 @@ database:
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("loaded %s via %s loader: %v\n", f.name, loader.Name(), d["database"])
+		fmt.Printf("loaded %s via %s loader\n", f.name, loader.Name())
 		doc.MergeFrom(d)
 	}
 
@@ -187,9 +199,24 @@ database:
 	_ = db.Hydrate(doc, dbRegistry)
 	fmt.Printf("\n== hydrated Database ==\n%+v\n", *db)
 
+	// ----- default vs user-set awareness (hard requirement) -----
+	fmt.Println("\n== provenance ==")
+	for _, k := range []string{"DB_TYPE", "HOST", "PASSWD", "SSL_MODE", "PATH", "LOG_SQL", "DB_RETRIES", "SLOW_QUERY_THRESHOLD", "MAX_OPEN_CONNS"} {
+		v := db.Provenance(k)
+		state := "user-set"
+		if !v.SetByUser() {
+			state = "default"
+		}
+		fmt.Printf("  %-20s %-8s origin=%s detail=%q\n", k, state, v.Origin, v.Detail)
+	}
+
 	// ----- goal: generated artifacts -----
-	fmt.Println("\n== generated app.example.ini fragment ==")
+	fmt.Println("\n== generated user config (goal 6: user-set values only) ==")
+	fmt.Println(genUserConfig(db))
+
+	fmt.Println("== generated app.example.ini fragment ==")
 	fmt.Println(genExampleINI(dbRegistry))
+
 	fmt.Println("== generated JSON Schema fragment ==")
 	fmt.Println(genJSONSchema(dbRegistry))
 }
