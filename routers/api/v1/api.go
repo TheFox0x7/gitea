@@ -101,7 +101,6 @@ import (
 	"gitea.dev/services/context"
 	"gitea.dev/services/forms"
 
-	_ "gitea.dev/routers/api/v1/swagger" // for swagger generation
 
 	chi_middleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"

@@ -233,6 +233,22 @@ func (r *Router) Patch(pattern string, h ...any) {
 	r.Methods("PATCH", pattern, h...)
 }
 
+// RouteInfo describes one registered route, as served by the router.
+type RouteInfo struct {
+	Method  string
+	Pattern string
+}
+
+// Routes lists all registered routes in chi's order; used to verify the API
+// contract rows cover exactly the served surface.
+func (r *Router) Routes() []RouteInfo {
+	var out []RouteInfo
+	for _, route := range r.chiRouter.Routes() {
+		out = append(out, RouteInfo{Method: route.Method, Pattern: route.Pattern})
+	}
+	return out
+}
+
 // ServeHTTP implements http.Handler
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// TODO: need to move it to the top-level common middleware, otherwise each "Mount" will cause it to be executed multiple times, which is inefficient.
