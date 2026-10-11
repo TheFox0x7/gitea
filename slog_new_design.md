@@ -18,9 +18,9 @@ flowchart TB
 
     subgraph mgr["Manager (defaultManager)"]
         REG["loggers map[name]*Logger"]
-        SINKREG["sinks map[name]*sinkState<br/>dedup key = SinkConfig.Name, first-wins, shared"]
+        SINKREG["sinks owned by logger trees<br/>dedup by SinkConfig.Name within one Apply"]
         PAUSE["pauseChan — PauseAll/ResumeAll"]
-        APPLY["Apply(Config)<br/>1. validate everything<br/>2. create missing sinks<br/>3. swap each logger's tree (atomic)"]
+        APPLY["Apply(Config)<br/>1. validate everything<br/>2. build all sinks fresh<br/>3. swap trees, stop orphaned backends"]
         CLOSE["Close — stop all backends, forget maps"]
     end
 
@@ -33,7 +33,7 @@ flowchart TB
         F2["json / logfmt: strip hidden attrs,<br/>Clone() → queue record (format deferred)"]
     end
 
-    subgraph st["sinkState — shared config, one per registered sink"]
+    subgraph st["sinkState — shared config, one per sink"]
         STATE["format, flags, colorize, prefix,<br/>stacktraceLevel, addSource, bufferLen<br/>level = *slog.LevelVar (atomic)"]
     end
 
@@ -66,7 +66,7 @@ Ownership rules that make sharing safe:
 - **frontend : backend is N : 1.** Each logger tree holds its own `sinkFrontend`
   clones (slog's `WithAttrs`/`WithGroup` must return new handlers); the queue,
   goroutine and io.Writer live in the refcount-by-registry `sinkBackend` and are
-  created once per `SinkConfig.Name`.
+  created once per sink within an `Apply` call.
 - **State is read-only after creation.** `sinkState` fields never change; the
   only mutable knob is the `slog.LevelVar`. Reconfiguration builds new objects
   and swaps one pointer (`Logger.swapHandler`), it never mutates a running tree.
@@ -170,7 +170,7 @@ Differences vs the printf path:
 | `loadLogGlobalFrom` / `prepareLoggerConfig` deprecated-key aliases (`ACCESS`, `ROUTER`, `XORM`, `ENABLE_*`, `DISABLE_ROUTER_LOG`) | none — INI translation stays in the setting layer (still to be ported) |
 | `initLoggerByName`: `","` sentinel = "use `[log] MODE`", `""` = disabled | explicit per-logger `LoggerConfig`; absent = untouched, sinks=[] = silent logger |
 | writer name = mode name (`"file"`, `"console"`) + `".access"` suffix special case | `SinkConfig.Name` is the dedup key, set by the caller — no implicit suffix rule |
-| `GetSharedWriter`/`NewSharedWriter` registry | first-wins `m.sinks[sc.Name]` in `Apply` |
+| `GetSharedWriter`/`NewSharedWriter` registry (reuse by name across re-inits) | fresh sinks per `Apply`, deduped within the call; orphaned backends stopped |
 | one text format (flags-driven) | `Format = legacy (default) / logfmt / json` per sink |
 | `WriterMode`: Level, StacktraceLevel, Prefix, Flags, Expression, BufferLen, WriterOption | `SinkConfig`: same minus Expression (dropped by design), plus Format, AddSource, typed `Console/File/Conn` option structs |
 | `SetupStderrLogger(name, "console-stderr", level)` (non-shared writer each call) | `StderrConfig(logger, level)` — **hard-codes sink name `"console-stderr"`** |
@@ -189,8 +189,8 @@ Differences vs the printf path:
 
 ### 3.3 Cons and issues
 
-1. **Sink-name collision trap (P1 #4 in parity notes).** `StderrConfig` hard-codes `"console-stderr"`. The port of `InitSQLLoggersForCli` must namespace per logger (e.g. `"console-stderr-xorm"`), or the xorm logger silently inherits the default logger's sink level. The old `SetupStderrLogger` bypassed the shared registry, so it never had this failure mode.
-2. **First-wins is silent.** When two loggers reference the same sink name, the second one's `Level`/`Format`/options are discarded without a warning. This matches old config-driven behavior, but old code's `.access` suffix reduced how often it happened by accident. An `Apply` warning (or error option) would make misconfiguration visible.
+1. **Sink-name collision trap (P1 #4 in parity notes).** *Resolved 2026-10-11: sinks are built fresh per `Apply`, so a second logger listing `"console-stderr"` gets its own sink — namespacing is now a readability concern only.* `StderrConfig` still hard-codes the name; keep distinct names in the port for a readable `Dump`.
+2. **Same-name sinks within one `Apply` take the first config.** Deduplication is by name within the call (that's what makes sharing work), so two loggers listing one sink name should carry identical options — same rule as the config proposal's section model. Cross-call surprises are gone (fresh build every time).
 3. **Defaults drift — the port must not rely on zero values:**
    - `BufferLen`: old global default **10000** (`[log] BUFFER_LEN`), new sink default **1000**. A naive port changes queue depth 10×.
    - `FileSinkOptions`: the `config.go` comment claims zero values fall back to rotatingfilewriter defaults ("size 1<<28, daily, 7 days, compress") — **that is wrong**: `rotatingfilewriter.Open` performs no normalization; `Rotate=false` means no rotation at all, and `KeepDays`/`Compress` zero-values disable retention/compression. The INI port must set every file option explicitly from old defaults (`LOG_ROTATE=true`, `MAX_SIZE_SHIFT=28`, `DAILY_ROTATE=true`, `MAX_DAYS=7`, `COMPRESS=true`, `COMPRESSION_LEVEL=-1`); the comment should be fixed regardless.
@@ -209,7 +209,7 @@ Differences vs the printf path:
 
 - Keep `prepareLoggerConfig` (deprecated aliases, `","`/`""` sentinels) as-is; translate its output to `Config`.
 - Resolve `FILE_NAME` via `LogPrepareFilenameForWriter` (ROOT_PATH join, `MkdirAll`-panic behavior, PID suffix on restart).
-- Per-logger sink names: `modeName` for built-ins, `modeName+".access"` for access; unique names for `SetupStderrLogger` equivalents.
+- Per-logger sink names: `modeName` for built-ins, `modeName+".access"` for access; distinct names for `SetupStderrLogger` equivalents (readability — correctness no longer depends on it).
 - Set `Colorize` from `CanColorStdout`/`CanColorStderr` (+`STDERR`), all file options from INI defaults, `BufferLen` from `[log] BUFFER_LEN` (decide: keep 10000 or adopt 1000).
 - Wire `golog` bridge after `Apply` (see §4).
 - Map admin `DumpLoggers` consumer to the new `Dump` shape.
@@ -227,3 +227,44 @@ Differences vs the printf path:
 | `IsLoggerEnabled` (logger_global.go:66) | `GetLogger(name).GetLevel() != LevelNone` | Old = `level < FATAL && len(writers) > 0` (`LoggerImpl.IsEnabled`). New `GetLevel()` returns `LevelNone` exactly when the tree has no sinks, so `!= LevelNone` is equivalent for any realistic config; only the degenerate FATAL-only logger differs. |
 | `Level.ColorAttributes()` (level.go:74) | export `levelColorAttrs` (e.g. `LevelColors`) | Only consumer is `routing/logger.go` colored messages; trivial. |
 | `rotatingfilewriter.ErrorPrintf = FallbackErrorf`, `process.TraceCallback = ...` (modules/log/init.go:25,27) | re-assign to `modules/slog.FallbackErrorf` / a closure over `Default().Log` | Init-time wiring, no adapter type needed. |
+
+## 5. Hexagonal readiness
+
+Audited 2026-10-11 against a future services-based, no-globals application refactor.
+Verdict: **the core is already DI-ready** — `Manager` is a self-contained injectable
+object (all state instance-scoped behind `m.mu`/atomics; every test constructs its own),
+and services can depend on `*slog.Logger` — a stdlib type — via `Logger.Slog()`, making
+`slog.Handler` the port and this module the adapter. The only intra-repo dependency is
+`rotatingfilewriter` (file-sink construction in `config.go`), one-directional.
+
+### 5.1 Global inventory and disposition
+
+| Global | Disposition |
+|---|---|
+| `defaultManager` + `GetManager`/`GetLogger`/`Default` (manager.go:140-153) | Quarantined; deleted when call sites inject a manager/logger at the composition root (migration plan final step) |
+| `global.go` printf functions | Deprecated; deleted at the end of the migration anyway |
+| `OsExiter = os.Exit` (internal.go:32) | Dies with the deprecated `Fatal` — in hexagonal, exiting is the caller's decision; or folds into `Manager` if `Fatal` survives |
+| `CanColorStdout`/`CanColorStderr` (color_console.go) | The real mutable globals: env-derived, written by the setting layer. Move into `Config` at load time — composition root detects color support once, passes explicit `Colorize` |
+| `projectPackagePrefix`, `levelNames`, `flagFromString`, … | Immutable lookup tables / init-computed constants — no action |
+
+`FallbackErrorf` → `os.Stderr` is the one accepted escape hatch (last-resort output
+before/despite DI); if purity ever demands it, it becomes a `Manager` field.
+
+### 5.2 Decisions locked in now
+
+1. **`slog.SetDefault` stays unwired** — the reverse bridge (design §3, parity notes P2)
+   would reintroduce a global through the backdoor. Third-party integrations get a
+   `*slog.Logger` injected at the composition root; `slog.Default()` users fall back to
+   stdlib stderr, which is visible and acceptable.
+2. **Sink-type registry (P0 #1) is instance configuration, not a package map**:
+   `NewManager(WithSinkType(name, open))` keeps registration at the composition root.
+   This also moves console/file/conn construction (and the `rotatingfilewriter` import)
+   out of core `config.go` into registered adapters, leaving the core with stdlib-only
+   dependencies.
+3. **Named loggers stay a composition-root concern**: the name→logger registry lives in
+   `Manager`, which lives in the app assembly; services receive loggers and never call
+   `GetLogger`.
+4. **Sequencing**: nothing blocks the migration — the shim period needs the package-level
+   API. The no-globals cleanup lands with the migration plan's final step (deprecated
+   surface deletion takes `global.go`/`defaultManager`/`OsExiter` with it), provided P0 #1
+   is built per decision 2 and the reverse bridge stays unwired per decision 1.

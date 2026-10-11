@@ -42,8 +42,9 @@ type ConnSinkOptions struct {
 	WriteTimeout   time.Duration
 }
 
-// SinkConfig configures one sink. Name is the deduplication key shared across
-// loggers; Type is "console", "file" or "conn"; Format defaults to legacy.
+// SinkConfig configures one sink. Name deduplicates sinks within one Apply
+// call, so multiple loggers can share one sink; Type is "console", "file" or
+// "conn"; Format defaults to legacy.
 // Level defaults to info, StacktraceLevel (legacy format only) to none,
 // BufferLen to 1000. Colorize must be set explicitly (use CanColorStdout /
 // CanColorStderr for console sinks).
@@ -93,10 +94,16 @@ func StderrConfig(loggerName string, level Level) Config {
 	}}}
 }
 
-// Apply builds the missing sinks and swaps the handler trees of the named
-// loggers. Already-existing sinks (by name) are reused unchanged. Invalid
-// configurations return an error before anything is modified.
+// Apply builds the loggers from cfg: sinks are created fresh on every call
+// (deduplicated by name within the call, so multiple loggers can share one
+// sink), the listed loggers' trees are swapped atomically, and sinks no longer
+// referenced by any logger are stopped. Loggers not listed keep their current
+// configuration.
 func (m *Manager) Apply(cfg Config) error {
+	return m.apply(cfg, nil)
+}
+
+func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error {
 	// validate first, so a bad config doesn't half-apply
 	for _, lc := range cfg.Loggers {
 		for _, sc := range lc.Sinks {
@@ -116,21 +123,55 @@ func (m *Manager) Apply(cfg Config) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// phase 1: build all sinks, nothing is modified yet on error
+	built := map[string]*sinkState{}
+	trees := make(map[string]*multiHandler, len(cfg.Loggers))
 	for _, lc := range cfg.Loggers {
 		frontends := make([]*sinkFrontend, 0, len(lc.Sinks))
 		for _, sc := range lc.Sinks {
-			st := m.sinks[sc.Name]
+			st := built[sc.Name]
 			if st == nil {
 				var err error
-				st, err = m.newSink(sc)
+				if w := sinkWriters[sc.Name]; w != nil {
+					st, err = m.newSinkWithWriter(sc, w)
+				} else {
+					st, err = m.newSink(sc)
+				}
 				if err != nil {
+					for _, s := range built {
+						s.backend.stop()
+					}
 					return err
 				}
-				m.sinks[sc.Name] = st
+				built[sc.Name] = st
 			}
 			frontends = append(frontends, newSinkFrontend(st))
 		}
-		m.getLoggerLocked(lc.Name).swapHandler(newMultiHandler(frontends))
+		trees[lc.Name] = newMultiHandler(frontends)
+	}
+
+	// phase 2: swap the trees, then stop backends no tree references anymore
+	oldTrees := make([]*multiHandler, 0, len(trees))
+	for _, lc := range cfg.Loggers {
+		l := m.getLoggerLocked(lc.Name)
+		oldTrees = append(oldTrees, l.handler.Load())
+		l.swapHandler(trees[lc.Name])
+	}
+	live := map[*sinkState]bool{}
+	for _, l := range m.loggers {
+		for _, st := range l.handler.Load().sinkStates() {
+			live[st] = true
+		}
+	}
+	stopped := map[*sinkState]bool{}
+	for _, h := range oldTrees {
+		for _, st := range h.sinkStates() {
+			if !live[st] && !stopped[st] {
+				stopped[st] = true
+				st.backend.stop()
+			}
+		}
 	}
 	return nil
 }

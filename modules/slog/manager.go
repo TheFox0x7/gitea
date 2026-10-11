@@ -11,13 +11,12 @@ import (
 // DefaultName is the name of the default logger.
 const DefaultName = "default"
 
-// Manager owns named loggers and shared sinks. Sinks are deduplicated by name
-// and reused across loggers ("first logger wins"): a sink referenced by a
-// later logger config keeps the level and format it was first created with.
+// Manager owns named loggers. Sinks are owned by the logger trees that
+// reference them; the manager only enumerates them (Close/Dump) and stops
+// backends when Apply leaves them unreferenced.
 type Manager struct {
 	mu      sync.Mutex
 	loggers map[string]*Logger
-	sinks   map[string]*sinkState
 
 	defaultLogger atomic.Pointer[Logger] // fast path for GetLogger(DefaultName)
 
@@ -27,7 +26,7 @@ type Manager struct {
 
 // NewManager creates a new manager.
 func NewManager() *Manager {
-	return &Manager{loggers: map[string]*Logger{}, sinks: map[string]*sinkState{}}
+	return &Manager{loggers: map[string]*Logger{}}
 }
 
 // GetLogger returns the logger with the given name, creating an empty one
@@ -88,12 +87,27 @@ func (m *Manager) getPauseChan() chan struct{} {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, st := range m.sinks {
+	for _, st := range m.liveSinkStates() {
 		st.backend.stop()
 	}
-	m.sinks = map[string]*sinkState{}
 	m.loggers = map[string]*Logger{}
 	m.defaultLogger.Store(nil)
+}
+
+// liveSinkStates returns the deduplicated sink states of all logger trees.
+// Callers must hold m.mu.
+func (m *Manager) liveSinkStates() []*sinkState {
+	var sts []*sinkState
+	seen := map[*sinkState]bool{}
+	for _, l := range m.loggers {
+		for _, st := range l.handler.Load().sinkStates() {
+			if !seen[st] {
+				seen[st] = true
+				sts = append(sts, st)
+			}
+		}
+	}
+	return sts
 }
 
 // Dump returns the state of all loggers and sinks, for debugging and display.
@@ -101,8 +115,8 @@ func (m *Manager) Dump() map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sinks := map[string]any{}
-	for name, st := range m.sinks {
-		sinks[name] = map[string]any{
+	for _, st := range m.liveSinkStates() {
+		sinks[st.name] = map[string]any{
 			"type":            st.sinkType,
 			"format":          st.format,
 			"level":           LevelName(st.level.Level()),

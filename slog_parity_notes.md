@@ -2,7 +2,7 @@
 
 - Date: 2026-10-10
 - Scope: `modules/slog` (branch `slog`, commit `efa20e3d4d`), audited against `modules/log` consumers and `slog_design.md`
-- Companion: `slog_new_design.md` (implemented architecture, event flows, config-migration analysis)
+- Companion: `slog_new_design.md` (implemented architecture, event flows, config-migration analysis), `slog_migration_plan.md` (whole-codebase rollout)
 - The per-writer `Expression` regex filter is intentionally excluded (dropped per design §1 non-goals)
 
 ## 1. Parity matrix
@@ -11,17 +11,17 @@
 |---|---|---|
 | Legacy text output byte-compat | OK | Ported + golden tests incl. colors/gopid/stacktrace/prefix/flags. Fixes two old bugs (stacktrace level aggregation, double-`ResumeAll` panic) — intentional non-bug-compat |
 | Arbitrary caller skip (XORM skip=8) | OK | `Log(skip,...)` → `runtime.Callers(skip+2)`; skip semantics identical to `LoggerImpl.Log` (`runtime.Caller(skip+1)`) |
-| Per-sink levels, fan-out, shared sinks | OK | First-wins dedup matches old `GetSharedWriter`/`NewSharedWriter` registry incl. the `.access` writer-name suffix special case |
+| Per-sink levels, fan-out, shared sinks | OK | Sinks are created fresh per Apply (dedup by name within the call for genuine sharing) — intentionally diverges from the old GetSharedWriter/NewSharedWriter cross-call reuse |
 | PauseAll/ResumeAll, flush-on-close | OK | Drain is bounded (5s deadline) vs old unbounded queue drain — strictly better; drain bypasses pause (old drained via queue close too) |
 | File-open-failure → stderr fallback | OK | Same trade-off and behavior as `NewEventWriterFile` |
-| Conn writer (reconnect/reconnect-on-msg) | OK | Plus dial/write deadlines and keepalive — the improvement design §4.1 requested |
+| Conn writer (reconnect/reconnect-on-msg) | OK | Plus dial/write deadlines and keepalive — the improvement design §4.1 requested. Verified against an unresponsive peer (`TestUnresponsiveConnSink`): the stalled sink errors by deadline while the console sink and callers are unaffected |
 | printf API surface (587 importers) | OK | Same skip conventions (`global.Log` → `Default().Log(skip+1)`), matching `logger_global.go` |
 | `LogStringer` / `ColoredValue` / sensitive-URL masking | OK printf / GAP structured | `protectSensitiveInfo` runs only in `logPrintf`; `Slog().Info("u", url)` leaks credentials into json/logfmt |
 | Router prefilled caller (`HTTPRequest`) | GAP | Mechanism exists (`hiddenInfo.caller` → `sourceParts`) but no public API to set it; `modules/web/routing/logger.go:26` is the sole consumer |
 | Access log (template → buffer → log) | OK | Pre-rendered buffer via `Log(1, level, "%s", buf)` works unchanged |
-| Reconfigure semantics (`RestartLogsWithPIDSuffix`, re-init) | OK | Old `initLoggerByName` also reuses existing shared writers by name; new `Apply` matches |
+| Reconfigure semantics (`RestartLogsWithPIDSuffix`, re-init) | Improved | Apply rebuilds sinks fresh and stops orphans, so re-init actually applies changed config — the old code reused shared writers by name and kept stale ones |
 | Stacktrace below `StacktraceLevel` | OK | Legacy-format only in new; old had no other format, so no regression (documented in `SinkConfig`) |
-| No-writer loggers | OK (silent) | Old `[no logger writer]` fallback was unreachable (level gate = NONE); design §7.5 decision should still be documented |
+| No-writer loggers | OK (silent) | Old `[no logger writer]` fallback was unreachable (level gate = NONE). Divergence 2026-10-11: `Fatal` echoes to stderr when no sink accepted the event, so early startup fatals are never lost; documented in `doc.go` |
 | `Event.Time` prefill | Dropped | Zero non-test consumers; acceptable |
 | Slog()/structured logging, json/logfmt formats | New | Per design; FATAL renamed via `ReplaceAttr`; TRACE renders `DEBUG-4` (naming wart) |
 
@@ -54,12 +54,14 @@
 
 ### P1 — behavioral parity traps
 
-4. **`StderrConfig` sink-name collision.** It hard-codes sink name `"console-stderr"` for any
+4. **`StderrConfig` sink-name collision.** *FIXED 2026-10-11: sinks are now built fresh
+   on every `Apply` (dedup only within the call), so a second logger listing the same sink
+   name gets its own sink — the collision is structurally impossible.* Original finding:
+   It hard-codes sink name `"console-stderr"` for any
    logger. Gitea calls `SetupStderrLogger(DEFAULT, "console-stderr", level)` and then
    `InitSQLLoggersForCli` → `SetupStderrLogger("xorm", "console-stderr", level)` — old creates
-   two independent non-shared writers; new first-wins reuse gives the xorm logger the default
-   logger's sink level. Config-driven sinks were name-deduped in old code; `SetupStderrLogger`
-   writers were not. Port needs per-logger sink names.
+   two independent non-shared writers; reuse-by-name gave the xorm logger the default
+   logger's sink level. Unique names are now a readability concern only.
 5. **Dynamic levels unreachable.** Per-sink `slog.LevelVar` exists but has no setter API —
    the design's "dynamic atomic levels" gain (§1, §4.4) is dead code as-is.
 6. **`Dump()` shape changed** vs `DumpLoggers()`/`DumpWriters()` consumed by
@@ -79,8 +81,8 @@
 
 - Masking on the `Slog()` path (or explicit docs).
 - TRACE naming in json/logfmt (`DEBUG-4`).
-- `slog.SetDefault` reverse bridge (design §3 last row) not wired.
-- Document the silent no-writer decision (design §7.5).
+- `slog.SetDefault` reverse bridge (design §3 last row) — **won't do** (2026-10-11): it would reintroduce a global; third-party integrations get loggers injected at the composition root instead (see `slog_new_design.md` §5.2).
+- ~~Document the silent no-writer decision (design §7.5)~~ — done 2026-10-11: lifecycle + early-error contract documented in `doc.go`.
 - ~~gofmt: `modules/slog/logger_test.go` (trailing whitespace)~~ — fixed 2026-10-10.
 - `doc.go` references `slog_design.md` — now present at repo root.
 - Fix `config.go`'s `FileSinkOptions` doc comment: zero values are *not* rotatingfilewriter defaults (see P1 #7).
@@ -151,6 +153,11 @@ buffer, close-timeout shape (2s stop / sequential over sinks).
 
 ### 4.5 Missing: benchmarks
 
-Design §9 phase 1 requires benchmarks (disabled fast path, single legacy console, json eager
-vs deferred, 3-sink fan-out). None exist. Add them next to `modules/log`'s if any, and
-re-run after fixing 4.1.
+**DONE 2026-10-11**: `modules/slog/benchmark_test.go` covers the hot paths — level-gate
+rejection (~50ns), default-config colorized legacy, plain legacy, json (deferred), the
+structured `Slog()` path, and 3-sink fan-out — through the package-level API
+(`Default()` fast path included), with chunked queue drains so the sink goroutine never
+overflows (drops would spam stderr and skew results). Old `modules/log` has no
+benchmarks; add a baseline there only if the parity gate needs an A/B number.
+Original finding: Design §9 phase 1 requires benchmarks (disabled fast path, single
+legacy console, json eager vs deferred, 3-sink fan-out). None exist.

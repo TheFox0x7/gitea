@@ -44,10 +44,14 @@ func Critical(format string, args ...any) {
 	Log(1, LevelCritical, format, args...)
 }
 
-// Fatal logs at FATAL on the default logger, flushes and exits.
+// Fatal logs at FATAL on the default logger, flushes and exits. If no sink
+// accepted the event (before Apply, or level filtered), the message is echoed
+// to stderr so an early fatal is never lost.
 // Deprecated: handle fatal errors explicitly instead.
 func Fatal(format string, args ...any) {
-	Log(1, LevelFatal, format, args...)
+	if !Default().logPrintf(1, LevelFatal, format, args) {
+		FallbackErrorf(format, args...)
+	}
 	GetManager().Close()
 	OsExiter(1)
 }

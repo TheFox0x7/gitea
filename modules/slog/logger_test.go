@@ -5,7 +5,10 @@ package slog
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -18,8 +21,9 @@ import (
 )
 
 type testRecorder struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	closed bool
 }
 
 func (r *testRecorder) Write(p []byte) (int, error) {
@@ -28,7 +32,18 @@ func (r *testRecorder) Write(p []byte) (int, error) {
 	return r.buf.Write(p)
 }
 
-func (r *testRecorder) Close() error { return nil }
+func (r *testRecorder) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	return nil
+}
+
+func (r *testRecorder) Closed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
+}
 
 func (r *testRecorder) String() string {
 	r.mu.Lock()
@@ -48,7 +63,6 @@ func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger
 	}
 	st, err := m.newSinkWithWriter(cfg, nopWriteCloser{rec})
 	require.NoError(t, err)
-	m.sinks[st.name] = st
 	l := m.GetLogger("test")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
 	t.Cleanup(m.Close)
@@ -106,7 +120,6 @@ func TestLevelFanout(t *testing.T) {
 	require.NoError(t, err)
 	stB, err := m.newSinkWithWriter(SinkConfig{Name: "b", Type: "console", Level: LevelDebug, Flags: FlagsFromString("none")}, nopWriteCloser{recB})
 	require.NoError(t, err)
-	m.sinks["a"], m.sinks["b"] = stA, stB
 	l := m.GetLogger("fanout")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stA), newSinkFrontend(stB)}))
 
@@ -168,20 +181,41 @@ func TestSharedSink(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Close)
 	rec := &testRecorder{}
-	st, err := m.newSinkWithWriter(SinkConfig{Name: "shared", Type: "console", Level: LevelInfo, Flags: FlagsFromString("none")}, nopWriteCloser{rec})
-	require.NoError(t, err)
-	m.sinks["shared"] = st
 
-	require.NoError(t, m.Apply(Config{Loggers: []LoggerConfig{
-		{Name: "one", Sinks: []SinkConfig{{Name: "shared", Type: "console"}}},
-		{Name: "two", Sinks: []SinkConfig{{Name: "shared", Type: "console"}}},
-	}}))
-	assert.Len(t, m.sinks, 1)
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{
+		{Name: "one", Sinks: []SinkConfig{{Name: "shared", Type: "console", Flags: FlagsFromString("none")}}},
+		{Name: "two", Sinks: []SinkConfig{{Name: "shared", Type: "console", Flags: FlagsFromString("none")}}},
+	}}, map[string]io.WriteCloser{"shared": rec}))
+	assert.Len(t, m.Dump()["sinks"], 1)
 
 	m.GetLogger("one").Info("from one")
 	m.GetLogger("two").Info("from two")
 	m.Close()
 	assert.Equal(t, "from one\nfrom two\n", rec.String())
+}
+
+func TestApplyReplacesSinks(t *testing.T) {
+	m := NewManager()
+	t.Cleanup(m.Close)
+	rec1, rec2 := &testRecorder{}, &testRecorder{}
+	sinks := func(level Level) Config {
+		return Config{Loggers: []LoggerConfig{{
+			Name:  "default",
+			Sinks: []SinkConfig{{Name: "s", Type: "console", Level: level, Flags: FlagsFromString("none")}},
+		}}}
+	}
+	require.NoError(t, m.apply(sinks(LevelInfo), map[string]io.WriteCloser{"s": rec1}))
+	m.GetLogger("default").Info("first")
+
+	// re-apply rebuilds the sink fresh: the new level wins and the old backend stops
+	require.NoError(t, m.apply(sinks(LevelWarn), map[string]io.WriteCloser{"s": rec2}))
+	m.GetLogger("default").Info("dropped")
+	m.GetLogger("default").Warn("kept")
+	m.Close()
+
+	assert.Equal(t, "first\n", rec1.String())
+	assert.True(t, rec1.Closed())
+	assert.Equal(t, "kept\n", rec2.String())
 }
 
 func TestApplyValidation(t *testing.T) {
@@ -192,7 +226,7 @@ func TestApplyValidation(t *testing.T) {
 		Sinks: []SinkConfig{{Name: "bad", Type: "carrier-pigeon"}},
 	}}})
 	assert.Error(t, err)
-	assert.Empty(t, m.sinks)
+	assert.Empty(t, m.loggers)
 }
 
 func TestPauseResume(t *testing.T) {
@@ -240,7 +274,6 @@ func TestMixedSinkFanout(t *testing.T) {
 	require.NoError(t, err)
 	stJ, err := m.newSinkWithWriter(SinkConfig{Name: "json", Type: "console", Level: LevelInfo, Format: FormatJSON}, nopWriteCloser{recJ})
 	require.NoError(t, err)
-	m.sinks["legacy"], m.sinks["json"] = stL, stJ
 	l := m.GetLogger("mixed")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stL), newSinkFrontend(stJ)}))
 
@@ -253,17 +286,163 @@ func TestMixedSinkFanout(t *testing.T) {
 	assert.Equal(t, "hello world", structured["msg"])
 }
 
+func TestFatalEarlyFallback(t *testing.T) {
+	OsExiter = func(int) {}
+	defer func() { OsExiter = os.Exit }()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	// early: no sinks applied — the message must be echoed to stderr
+	m := NewManager()
+	m.GetLogger("early").Fatal("boom %d", 42)
+	m.Close()
+
+	// late: a sink accepted the event — no stderr echo
+	_, l, rec := newTestLogger(t, withFlags(0))
+	l.Fatal("late")
+	l.mgr.Close()
+
+	os.Stderr = oldStderr
+	require.NoError(t, w.Close())
+	bs, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(bs), "boom 42")
+	assert.NotContains(t, string(bs), "late")
+	assert.Contains(t, rec.String(), "late")
+}
+
+func TestOverflowDrop(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = w
+	m := NewManager()
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		m.Close()
+	})
+
+	rec := &testRecorder{}
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{{
+		Name:  "default",
+		Sinks: []SinkConfig{{Name: "s", Type: "console", Level: LevelInfo, Flags: FlagsFromString("none"), BufferLen: 1}},
+	}}}, map[string]io.WriteCloser{"s": rec}))
+
+	// paused consumer: the queue (cap 1) fills, the rest drops to stderr
+	m.PauseAll()
+	for i := range 10 {
+		m.GetLogger("default").Info("overflow %d", i)
+	}
+	m.ResumeAll()
+	m.Close()
+
+	require.NoError(t, w.Close())
+	bs, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(bs), "queue is full")
+	// which events survive is racy; the invariants are: the first event lands,
+	// the last is dropped, and at most the in-flight one + queue cap pass
+	assert.Contains(t, rec.String(), "overflow 0")
+	assert.NotContains(t, rec.String(), "overflow 9")
+	assert.LessOrEqual(t, strings.Count(strings.TrimSpace(rec.String()), "\n")+1, 2)
+}
+
+func TestStacktraceLevel(t *testing.T) {
+	m, l, rec := newTestLogger(t, withFlags(0), func(c *SinkConfig) { c.StacktraceLevel = LevelError })
+	l.Warn("no stack here")
+	l.Error("stack here")
+	m.Close()
+
+	// the stacktrace renders only for the event at/above the configured level,
+	// with source line (Stack() format: "file:line (0x…)\n\tfunc: source")
+	assert.Contains(t, rec.String(), "no stack here\nstack here\n\t")
+	assert.Contains(t, rec.String(), "TestStacktraceLevel: l.Error(\"stack here\")")
+}
+
+func TestColorizedZeroArg(t *testing.T) {
+	// colorized-only tree: the uncolored pre-render is skipped entirely
+	m, l, rec := newTestLogger(t, withFlags(0), func(c *SinkConfig) { c.Colorize = true })
+	l.Info("plain message, no args")
+	m.Close()
+	assert.Equal(t, "plain message, no args\n", rec.String())
+}
+
+func TestUnresponsiveConnSink(t *testing.T) {
+	// peer accepts but never reads: writes stall until the deadline fires
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	var held []net.Conn
+	var heldMu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			heldMu.Lock()
+			held = append(held, c) // never read: the peer stays unresponsive
+			heldMu.Unlock()
+		}
+	}()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	rec := &testRecorder{}
+	m := NewManager()
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		m.Close()
+		heldMu.Lock()
+		defer heldMu.Unlock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+	})
+
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{{
+		Name: "default",
+		Sinks: []SinkConfig{
+			{Name: "console", Type: "console", Level: LevelInfo, Flags: FlagsFromString("none")},
+			{Name: "net", Type: "conn", Level: LevelInfo, Conn: &ConnSinkOptions{
+				Addr:         ln.Addr().String(),
+				WriteTimeout: 100 * time.Millisecond,
+			}},
+		},
+	}}}, map[string]io.WriteCloser{"console": rec}))
+
+	payload := strings.Repeat("x", 1<<20) // 1 MiB: exhausts socket buffers fast
+	const total = 5
+	for i := range total {
+		// the caller never waits on the stalled peer: enqueue is non-blocking
+		// (bounded queue, select/default drop), the write happens on the net
+		// sink's own goroutine
+		m.GetLogger("default").Info("stall test %d %s", i, payload)
+		time.Sleep(200 * time.Millisecond) // keep the net sink queue from overflowing
+	}
+	m.Close()
+
+	require.NoError(t, w.Close())
+	bs, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(bs), "unable to write log message") // deadline fired
+	assert.Equal(t, total, strings.Count(rec.String(), "stall test"))
+}
+
 func TestSlogReconfigure(t *testing.T) {
 	m, l, rec := newTestLogger(t, withFlags(0))
 	l.Slog().Info("before")
 
 	rec2 := &testRecorder{}
-	st, err := m.newSinkWithWriter(SinkConfig{Name: "test2", Type: "console", Level: LevelInfo, Flags: FlagsFromString("none")}, nopWriteCloser{rec2})
-	require.NoError(t, err)
-	m.sinks["test2"] = st
-	require.NoError(t, m.Apply(Config{Loggers: []LoggerConfig{
-		{Name: "test", Sinks: []SinkConfig{{Name: "test2", Type: "console"}}},
-	}}))
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{
+		{Name: "test", Sinks: []SinkConfig{{Name: "test2", Type: "console", Flags: FlagsFromString("none")}}},
+	}}, map[string]io.WriteCloser{"test2": rec2}))
 
 	l.Slog().Info("after") // a re-fetched Slog() follows the swapped tree
 	l.Info("after2")       // the printf path resolves the handler per call

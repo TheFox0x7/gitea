@@ -98,10 +98,14 @@ func (l *Logger) Critical(format string, args ...any) {
 	l.logPrintf(1, LevelCritical, format, args)
 }
 
-// Fatal logs at FATAL, flushes the manager and exits the process.
+// Fatal logs at FATAL, flushes the manager and exits the process. If no sink
+// accepted the event (before Apply, or level filtered), the message is echoed
+// to stderr so an early fatal is never lost.
 // Deprecated: use Slog().Log(ctx, LevelFatal, ...) plus explicit exit handling instead.
 func (l *Logger) Fatal(format string, args ...any) {
-	l.logPrintf(1, LevelFatal, format, args)
+	if !l.logPrintf(1, LevelFatal, format, args) {
+		FallbackErrorf(format, args...)
+	}
 	l.mgr.Close()
 	OsExiter(1)
 }
@@ -109,11 +113,12 @@ func (l *Logger) Fatal(format string, args ...any) {
 // logPrintf is the printf pipeline: level gate (one atomic OR check), lazy PC
 // capture, arg resolution on the caller goroutine (masking, LogStringer,
 // ColoredValue), then dispatch. Raw format+args and the stacktrace travel
-// beside the record as *hiddenInfo, never as record attrs.
-func (l *Logger) logPrintf(skip int, level Level, format string, args []any) {
+// beside the record as *hiddenInfo, never as record attrs. It reports whether
+// any sink accepted the event.
+func (l *Logger) logPrintf(skip int, level Level, format string, args []any) bool {
 	h := l.handler.Load()
 	if !h.Enabled(context.Background(), level) {
-		return
+		return false
 	}
 
 	var pc uintptr
@@ -177,4 +182,5 @@ func (l *Logger) logPrintf(skip int, level Level, format string, args []any) {
 		hi.prefillSource(&rec)
 	}
 	h.handle(rec, hi)
+	return true
 }

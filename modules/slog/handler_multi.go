@@ -78,6 +78,14 @@ func (h *multiHandler) handle(r slog.Record, hi *hiddenInfo) {
 	}
 }
 
+func (h *multiHandler) sinkStates() []*sinkState {
+	sts := make([]*sinkState, len(h.children))
+	for i, f := range h.children {
+		sts[i] = f.st
+	}
+	return sts
+}
+
 func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	nh := *h
 	nh.children = slices.Clone(h.children)
