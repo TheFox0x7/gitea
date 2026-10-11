@@ -8,6 +8,8 @@ const (
 	SettingsKeyHiddenCommentTypes = "issue.hidden_comment_types"
 	// SettingsKeyDiffWhitespaceBehavior is the setting key for whitespace behavior of diff
 	SettingsKeyDiffWhitespaceBehavior = "diff.whitespace_behaviour"
+	// SettingsKeyDiffViewer is the setting key for the diff viewer variant (experiment opt-in)
+	SettingsKeyDiffViewer = "diff.viewer"
 	// SettingsKeyShowOutdatedComments is the setting key whether or not to show outdated comments in PRs
 	SettingsKeyShowOutdatedComments = "comment_code.show_outdated"
 

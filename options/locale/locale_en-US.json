@@ -2569,6 +2569,8 @@
   "repo.diff.options_button": "Diff Options",
   "repo.diff.download_patch": "Download Patch File",
   "repo.diff.download_diff": "Download Diff File",
+  "repo.diff.experimental_view_on": "Enable experimental diff view",
+  "repo.diff.experimental_view_off": "Disable experimental diff view",
   "repo.diff.show_split_view": "Split View",
   "repo.diff.show_unified_view": "Unified View",
   "repo.diff.whitespace_button": "Whitespace",

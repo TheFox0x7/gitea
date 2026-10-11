@@ -59,9 +59,12 @@ func (repo *Repository) GetDiffNumChangedFiles(ctx context.Context, base, head s
 var patchCommits = regexp.MustCompile(`^From\s(\w+)\s`)
 
 // GetDiff generates and returns patch data between given revisions, optimized for human readability
-func (repo *Repository) GetDiff(ctx context.Context, compareArg string, w io.Writer) error {
-	return gitcmd.NewCommand("diff", "-p").AddDynamicArguments(compareArg).
-		WithRepo(repo).
+func (repo *Repository) GetDiff(ctx context.Context, compareArg string, w io.Writer, extraArgs ...gitcmd.TrustedCmdArgs) error {
+	cmd := gitcmd.NewCommand("diff", "-p").AddDynamicArguments(compareArg)
+	for _, args := range extraArgs {
+		cmd.AddArguments(args...)
+	}
+	return cmd.WithRepo(repo).
 		WithStdoutCopy(w).
 		Run(ctx)
 }

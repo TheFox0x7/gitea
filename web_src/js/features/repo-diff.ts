@@ -14,6 +14,7 @@ import {registerGlobalEventFunc, registerGlobalInitFunc} from '../modules/observ
 import {performFetchActionTrigger} from '../modules/fetch-action.ts';
 import {applyFiltersToFileBoxes, diffTreeStore} from '../modules/diff-file.ts';
 import {initImageDiff} from './imagediff.ts';
+import {initRepoDiffPierreView} from './repo-diff-pierre.ts';
 
 function initDiffFileViewToggle(el: HTMLElement) {
   // switch between "rendered" and "source", for image and CSV files
@@ -254,6 +255,7 @@ export function initRepoDiffView() {
   registerGlobalInitFunc('initDiffFileViewedForm', initDiffFileViewedForm);
   registerGlobalInitFunc('initDiffFileImageDiff', initImageDiff);
   registerGlobalInitFunc('initDiffFileViewToggle', initDiffFileViewToggle);
+  registerGlobalInitFunc('initRepoDiffPierreView', initRepoDiffPierreView);
 
   if (!document.querySelector('#diff-file-boxes')) return;
   initRepoDiffConversationNav(); // "previous" and "next" buttons only appear on "diff" page

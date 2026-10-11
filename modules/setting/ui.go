@@ -42,6 +42,10 @@ var UI = struct {
 
 	AmbiguousUnicodeDetection bool
 
+	// EnableExperimentalDiffViewer turns on the experimental client-side diff
+	// viewer (the @pierre/diffs spike) for every instance user
+	EnableExperimentalDiffViewer bool
+
 	// TODO: DefaultShowFullName is introduced by https://github.com/go-gitea/gitea/pull/6710
 	// But there are still many edge cases:
 	// * Many places still use "username", not respecting this setting
@@ -161,6 +165,7 @@ func loadUIFrom(rootCfg ConfigProvider) {
 	UI.ShowUserEmail = sec.Key("SHOW_USER_EMAIL").MustBool(true)
 	UI.DefaultShowFullName = sec.Key("DEFAULT_SHOW_FULL_NAME").MustBool(false)
 	UI.SearchRepoDescription = sec.Key("SEARCH_REPO_DESCRIPTION").MustBool(true)
+	UI.EnableExperimentalDiffViewer = sec.Key("ENABLE_EXPERIMENTAL_DIFF_VIEWER").MustBool(false)
 
 	if UI.PreferredTimestampTense != "mixed" && UI.PreferredTimestampTense != "absolute" {
 		log.Fatal("ui.PREFERRED_TIMESTAMP_TENSE must be either 'mixed' or 'absolute'")

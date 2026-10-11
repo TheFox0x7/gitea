@@ -34,6 +34,11 @@
 			{{end}}
 			{{template "repo/diff/whitespace_dropdown" .}}
 			{{template "repo/diff/options_dropdown" .}}
+			{{if and .PageIsPullFiles (not .DiffNotAvailable) (not $.ExperimentalDiffViewForced)}}
+				<a class="ui tiny basic button" href="?style={{if .IsSplitStyle}}split{{else}}unified{{end}}&whitespace={{$.WhitespaceBehavior}}&show-outdated={{$.ShowOutdatedComments}}&view={{if .ExperimentalDiffViewUser}}default{{else}}experimental{{end}}">
+					{{if .ExperimentalDiffViewUser}}{{ctx.Locale.Tr "repo.diff.experimental_view_off"}}{{else}}{{ctx.Locale.Tr "repo.diff.experimental_view_on"}}{{end}}
+				</a>
+			{{end}}
 			{{if .PageIsPullFiles}}
 				<div id="diff-commit-select" data-merge-base="{{$.CompareInfo.CompareBase}}" data-issuelink="{{$.Issue.Link}}"
 					data-queryparams="?style={{if $.IsSplitStyle}}split{{else}}unified{{end}}&whitespace={{$.WhitespaceBehavior}}&show-outdated={{$.ShowOutdatedComments}}"
@@ -234,6 +239,19 @@
 					</div>
 				{{end}}
 				</div>
+				{{if and .PageIsPullFiles (not .DiffNotAvailable)}}
+					{{if .ExperimentalDiffView}}
+						{{/* spike: client-side @pierre/diffs renderer, see web_src/js/features/repo-diff-pierre.ts */}}
+						<div id="diff-pierre" class="tw-hidden" data-global-init="initRepoDiffPierreView" data-diff-url="{{$.Issue.Link}}.diff"
+							data-viewed-files-url="{{$.Issue.Link}}/viewed-files" data-comment-url="{{$.Issue.Link}}/files/reviews/comments"
+							data-comment-form-url="{{$.Issue.Link}}/files/reviews/new_comment"
+							data-headcommit="{{$.AfterCommitID}}" data-before-commit="{{$.BeforeCommitID}}" data-repo-link="{{$.RepoLink}}"
+							data-whitespace="{{$.WhitespaceBehavior}}"
+							data-diff-style="{{if .IsSplitStyle}}split{{else}}unified{{end}}"
+							data-style-view-tooltips="{{JsonUtils.EncodeToString (dict "split" (ctx.Locale.Tr "repo.diff.show_split_view") "unified" (ctx.Locale.Tr "repo.diff.show_unified_view"))}}"
+							data-viewed-states="{{if $.DiffViewedStates}}{{JsonUtils.EncodeToString $.DiffViewedStates}}{{end}}"></div>
+					{{end}}
+				{{end}}
 			</div>
 		{{end}}
 	</div>

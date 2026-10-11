@@ -23,7 +23,7 @@ import (
 )
 
 // DownloadDiffOrPatch will write the patch for the pr to the writer
-func DownloadDiffOrPatch(ctx context.Context, pr *issues_model.PullRequest, w io.Writer, patch, binary bool) error {
+func DownloadDiffOrPatch(ctx context.Context, pr *issues_model.PullRequest, w io.Writer, patch, binary bool, whitespaceBehavior gitcmd.TrustedCmdArgs) error {
 	if err := pr.LoadBaseRepo(ctx); err != nil {
 		log.Error("Unable to load base repository ID %d for pr #%d [%d]", pr.BaseRepoID, pr.Index, pr.ID)
 		return err
@@ -42,7 +42,7 @@ func DownloadDiffOrPatch(ctx context.Context, pr *issues_model.PullRequest, w io
 	case binary:
 		err = gitRepo.GetDiffBinary(ctx, compareArg, w)
 	default:
-		err = gitRepo.GetDiff(ctx, compareArg, w)
+		err = gitRepo.GetDiff(ctx, compareArg, w, whitespaceBehavior)
 	}
 
 	if err != nil {

@@ -809,6 +809,13 @@ func viewPullFiles(ctx *context.Context, beforeCommitID, afterCommitID string) {
 	ctx.Data["DiffShortStat"] = diffShortStat
 	ctx.Data["NumViewedFiles"] = numViewedFiles
 
+	// per-file viewed state for the client-side diff renderer (empty unless synced above)
+	viewedStates := make(map[string]bool, len(diff.Files))
+	for _, file := range diff.Files {
+		viewedStates[file.Name] = file.IsViewed
+	}
+	ctx.Data["DiffViewedStates"] = viewedStates
+
 	ctx.PageData["prReview"] = map[string]any{
 		"numberOfFiles":       diffShortStat.NumFiles,
 		"numberOfViewedFiles": numViewedFiles,
@@ -1487,7 +1494,11 @@ func DownloadPullDiffOrPatch(ctx *context.Context, patch bool) {
 
 	binary := ctx.FormBool("binary")
 
-	if err := pull_service.DownloadDiffOrPatch(ctx, pr, ctx, patch, binary); err != nil {
+	// whitespace handling for the client-side diff renderer: parameter mirrors the
+	// "whitespace" option of the diff view page (see repo.middlewares.SetWhitespaceBehavior)
+	whitespaceFlag := gitdiff.GetWhitespaceFlag(ctx.FormString("whitespace"))
+
+	if err := pull_service.DownloadDiffOrPatch(ctx, pr, ctx, patch, binary, whitespaceFlag); err != nil {
 		ctx.ServerError("DownloadDiffOrPatch", err)
 		return
 	}

@@ -206,11 +206,20 @@ function updateShowMoreButton(matchingBelow: number) {
   }
 }
 
+// the spike's client-side renderer (web_src/js/features/repo-diff-pierre.ts) puts one
+// container per file under #diff-pierre; the same filter predicate drives them, so the
+// file tree works identically whether the diff is server- or client-rendered
+function getDiffClientContainers(): NodeListOf<HTMLElement> {
+  return document.querySelectorAll<HTMLElement>('#diff-pierre .diff-client-file-box[data-new-filename]');
+}
+
 export function applyFiltersToFileBoxes(store: Reactive<DiffFileTree>) {
   const boxes = document.querySelectorAll<HTMLElement>('#diff-file-boxes .diff-file-box[data-new-filename]');
+  const containers = getDiffClientContainers();
   const matches = buildFilter(store);
   if (!matches) {
     for (const box of boxes) toggleElem(box, true);
+    for (const container of containers) toggleElem(container, true);
     toggleElem('#diff-no-matches', false);
     updateShowMoreButton(0);
     updateLoadProgress(boxes.length, countEveryFileInDiff(store));
@@ -222,10 +231,17 @@ export function applyFiltersToFileBoxes(store: Reactive<DiffFileTree>) {
     if (matched) visibleCount++;
     toggleElem(box, matched);
   }
+  for (const container of containers) {
+    const matched = matches(container.getAttribute('data-new-filename')!, container.getAttribute('data-old-filename')!);
+    if (matched) visibleCount++;
+    toggleElem(container, matched);
+  }
   const matchingCount = countMatchingFiles(store);
   updateShowMoreButton(matchingCount - visibleCount);
   updateLoadProgress(boxes.length, countEveryFileInDiff(store));
-  toggleElem('#diff-no-matches', matchingCount === 0);
+  // with a client renderer, matchingCount still counts non-rendered files (binary, renames),
+  // so also consider the containers actually visible before deciding nothing matched
+  toggleElem('#diff-no-matches', matchingCount === 0 || (containers.length > 0 && visibleCount === 0));
 }
 
 function isEntryViewed(entry: DiffTreeEntry): boolean {

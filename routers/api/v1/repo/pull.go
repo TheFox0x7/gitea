@@ -357,7 +357,7 @@ func DownloadPullDiffOrPatch(ctx *context.APIContext) {
 
 	binary := ctx.FormBool("binary")
 
-	if err := pull_service.DownloadDiffOrPatch(ctx, pr, ctx, patch, binary); err != nil {
+	if err := pull_service.DownloadDiffOrPatch(ctx, pr, ctx, patch, binary, nil); err != nil {
 		ctx.APIErrorInternal(err)
 		return
 	}

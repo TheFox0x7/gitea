@@ -89,6 +89,35 @@ func GetWhitespaceBehavior(ctx *context.Context) string {
 	return behavior
 }
 
+// SetDiffViewer resolves the diff viewer variant (server-rendered default vs the
+// experimental client renderer) via ?view=experimental, persisted per user;
+// an instance-wide config key can force it on for everyone
+func SetDiffViewer(ctx *context.Context) {
+	const defaultViewer = "default"
+	viewer := ctx.FormString("view")
+	switch viewer {
+	case "", "default", "experimental":
+	default:
+		viewer = defaultViewer
+	}
+	if ctx.IsSigned {
+		userViewer, err := user_model.GetUserSetting(ctx, ctx.Doer.ID, user_model.SettingsKeyDiffViewer, defaultViewer)
+		if err == nil {
+			if viewer == "" {
+				viewer = userViewer
+			} else if viewer != userViewer {
+				_ = user_model.SetUserSetting(ctx, ctx.Doer.ID, user_model.SettingsKeyDiffViewer, viewer)
+			}
+		} // else: we can ignore the error safely
+	}
+	if viewer == "" {
+		viewer = defaultViewer
+	}
+	ctx.Data["ExperimentalDiffViewUser"] = viewer == "experimental"
+	ctx.Data["ExperimentalDiffViewForced"] = setting.UI.EnableExperimentalDiffViewer
+	ctx.Data["ExperimentalDiffView"] = setting.UI.EnableExperimentalDiffViewer || viewer == "experimental"
+}
+
 // SetShowOutdatedComments set the show outdated comments option as context variable
 func SetShowOutdatedComments(ctx *context.Context) {
 	showOutdatedCommentsValue := ctx.FormString("show-outdated")
