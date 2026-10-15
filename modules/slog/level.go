@@ -62,6 +62,7 @@ func LevelFromString(s string) (Level, bool) {
 	return l, true
 }
 
+// levelColors is also exposed as LevelColors for the compatibility shim.
 var levelColors = map[Level][]ColorAttribute{
 	LevelTrace: {Bold, FgCyan},
 	LevelDebug: {Bold, FgBlue},
@@ -69,6 +70,11 @@ var levelColors = map[Level][]ColorAttribute{
 	LevelWarn:  {Bold, FgYellow},
 	LevelError: {Bold, FgRed},
 	LevelFatal: {Bold, BgRed},
+}
+
+// LevelColors returns the ANSI color attributes for a log level.
+func LevelColors(l Level) []ColorAttribute {
+	return levelColorAttrs(l)
 }
 
 func levelColorAttrs(l Level) []ColorAttribute {

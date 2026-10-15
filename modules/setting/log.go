@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"gitea.dev/modules/log"
+	"gitea.dev/modules/slog"
 	"gitea.dev/modules/util"
 )
 
@@ -110,67 +111,66 @@ func LogPrepareFilenameForWriter(fileName, defaultFileName string) string {
 	return fileName
 }
 
-func loadLogModeByName(rootCfg ConfigProvider, loggerName, modeName string) (writerName, writerType string, writerMode log.WriterMode, err error) {
+func loadLogModeByName(rootCfg ConfigProvider, loggerName, modeName string) slog.SinkConfig {
 	sec := rootCfg.Section("log." + modeName)
 
-	writerMode = log.WriterMode{}
-	writerType = ConfigSectionKeyString(sec, "MODE")
+	writerType := ConfigSectionKeyString(sec, "MODE")
 	if writerType == "" {
 		writerType = modeName
 	}
 
-	writerName = modeName
+	writerName := modeName
 	defaultFlags := "stdflags"
-	defaultFilaName := "gitea.log"
+	defaultFileName := "gitea.log"
 	if loggerName == "access" {
 		// "access" logger is special, by default it doesn't have output flags, so it also needs a new writer name to avoid conflicting with other writers.
 		// so "access" logger's writer name is usually "file.access" or "console.access"
 		writerName += ".access"
 		defaultFlags = "none"
-		defaultFilaName = "access.log"
+		defaultFileName = "access.log"
 	}
 
-	writerMode.Level = log.LevelFromString(ConfigInheritedKeyString(sec, "LEVEL", Log.Level.String()))
-	writerMode.StacktraceLevel = log.LevelFromString(ConfigInheritedKeyString(sec, "STACKTRACE_LEVEL", Log.StacktraceLogLevel.String()))
-	writerMode.Prefix = ConfigInheritedKeyString(sec, "PREFIX")
-	writerMode.Expression = ConfigInheritedKeyString(sec, "EXPRESSION")
-	writerMode.Flags = log.FlagsFromString(ConfigInheritedKeyString(sec, "FLAGS", defaultFlags))
+	sink := slog.SinkConfig{
+		Name:            writerName,
+		Type:            writerType,
+		Level:           log.LevelFromString(ConfigInheritedKeyString(sec, "LEVEL", Log.Level.String())),
+		StacktraceLevel: log.LevelFromString(ConfigInheritedKeyString(sec, "STACKTRACE_LEVEL", Log.StacktraceLogLevel.String())),
+		Prefix:          ConfigInheritedKeyString(sec, "PREFIX"),
+		Flags:           slog.FlagsFromString(ConfigInheritedKeyString(sec, "FLAGS", defaultFlags)),
+		Format:          slog.Format(ConfigInheritedKeyString(sec, "FORMAT", string(slog.FormatLegacy))),
+	}
 
 	switch writerType {
 	case "console":
 		useStderr := ConfigInheritedKey(sec, "STDERR").MustBool(false)
-		defaultCanColor := log.CanColorStdout
+		defaultCanColor := slog.CanColorStdout
 		if useStderr {
-			defaultCanColor = log.CanColorStderr
+			defaultCanColor = slog.CanColorStderr
 		}
-		writerOption := log.WriterConsoleOption{Stderr: useStderr}
-		writerMode.Colorize = ConfigInheritedKey(sec, "COLORIZE").MustBool(defaultCanColor)
-		writerMode.WriterOption = writerOption
+		sink.Colorize = ConfigInheritedKey(sec, "COLORIZE").MustBool(defaultCanColor)
+		sink.Console = &slog.ConsoleSinkOptions{Stderr: useStderr}
 	case "file":
-		fileName := LogPrepareFilenameForWriter(ConfigInheritedKey(sec, "FILE_NAME").String(), defaultFilaName)
-		writerOption := log.WriterFileOption{}
-		writerOption.FileName = fileName + filenameSuffix // FIXME: the suffix doesn't seem right, see its related comments
-		writerOption.LogRotate = ConfigInheritedKey(sec, "LOG_ROTATE").MustBool(true)
-		writerOption.MaxSize = 1 << uint(ConfigInheritedKey(sec, "MAX_SIZE_SHIFT").MustInt(28))
-		writerOption.DailyRotate = ConfigInheritedKey(sec, "DAILY_ROTATE").MustBool(true)
-		writerOption.MaxDays = ConfigInheritedKey(sec, "MAX_DAYS").MustInt(7)
-		writerOption.Compress = ConfigInheritedKey(sec, "COMPRESS").MustBool(true)
-		writerOption.CompressionLevel = ConfigInheritedKey(sec, "COMPRESSION_LEVEL").MustInt(-1)
-		writerMode.WriterOption = writerOption
+		fileName := LogPrepareFilenameForWriter(ConfigInheritedKey(sec, "FILE_NAME").String(), defaultFileName)
+		sink.File = &slog.FileSinkOptions{
+			FileName:         fileName + filenameSuffix,
+			LogRotate:        ConfigInheritedKey(sec, "LOG_ROTATE").MustBool(true),
+			MaxSize:          1 << uint(ConfigInheritedKey(sec, "MAX_SIZE_SHIFT").MustInt(28)),
+			DailyRotate:      ConfigInheritedKey(sec, "DAILY_ROTATE").MustBool(true),
+			MaxDays:          ConfigInheritedKey(sec, "MAX_DAYS").MustInt(7),
+			Compress:         ConfigInheritedKey(sec, "COMPRESS").MustBool(true),
+			CompressionLevel: ConfigInheritedKey(sec, "COMPRESSION_LEVEL").MustInt(-1),
+		}
 	case "conn":
-		writerOption := log.WriterConnOption{}
-		writerOption.ReconnectOnMsg = ConfigInheritedKey(sec, "RECONNECT_ON_MSG").MustBool()
-		writerOption.Reconnect = ConfigInheritedKey(sec, "RECONNECT").MustBool()
-		writerOption.Protocol = ConfigInheritedKey(sec, "PROTOCOL").In("tcp", []string{"tcp", "unix", "udp"})
-		writerOption.Addr = ConfigInheritedKey(sec, "ADDR").MustString(":7020")
-		writerMode.WriterOption = writerOption
-	default:
-		if !log.HasEventWriter(writerType) {
-			return "", "", writerMode, fmt.Errorf("invalid log writer type (mode): %s, maybe it needs something like 'MODE=file' in [log.%s] section", writerType, modeName)
+		sink.Conn = &slog.ConnSinkOptions{
+			ReconnectOnMsg: ConfigInheritedKey(sec, "RECONNECT_ON_MSG").MustBool(),
+			Reconnect:      ConfigInheritedKey(sec, "RECONNECT").MustBool(),
+			Protocol:       ConfigInheritedKey(sec, "PROTOCOL").In("tcp", []string{"tcp", "unix", "udp"}),
+			Addr:           ConfigInheritedKey(sec, "ADDR").MustString(":7020"),
 		}
 	}
-
-	return writerName, writerType, writerMode, nil
+	// other writer types come from the sink-type registry (e.g. "test") and
+	// are validated by Apply
+	return sink
 }
 
 var filenameSuffix = ""
@@ -193,34 +193,42 @@ func initAllLoggers() {
 	if initLoggerDisabled {
 		return
 	}
-	initManagedLoggers(log.GetManager(), CfgProvider)
+	initManagedLoggers(slog.GetManager(), CfgProvider)
 
 	golog.SetFlags(0)
 	golog.SetPrefix("")
-	golog.SetOutput(log.LoggerToWriter(log.GetLogger(log.DEFAULT).Info))
+	golog.SetOutput(gologBridge{
+		handler: slog.GetLogger(slog.DefaultName).Slog().Handler(),
+		level:   slog.LevelInfo,
+	})
 }
 
 func DisableLoggerInit() {
 	initLoggerDisabled = true
 }
 
-func initManagedLoggers(manager *log.LoggerManager, cfg ConfigProvider) {
+func initManagedLoggers(manager *slog.Manager, cfg ConfigProvider) {
 	loadLogGlobalFrom(cfg)
 	prepareLoggerConfig(cfg)
 
-	initLoggerByName(manager, cfg, log.DEFAULT) // default
-	initLoggerByName(manager, cfg, "access")
-	initLoggerByName(manager, cfg, "router")
-	initLoggerByName(manager, cfg, "xorm")
+	config := slog.Config{}
+	for _, name := range []string{log.DEFAULT, "access", "router", "xorm"} {
+		if loggerConfig, ok := loggerConfigByName(cfg, name); ok {
+			config.Loggers = append(config.Loggers, loggerConfig)
+		}
+	}
+	if err := manager.Apply(config); err != nil {
+		log.FallbackErrorf("Failed to apply log config: %v", err)
+	}
 }
 
-func initLoggerByName(manager *log.LoggerManager, rootCfg ConfigProvider, loggerName string) {
+func loggerConfigByName(rootCfg ConfigProvider, loggerName string) (slog.LoggerConfig, bool) {
 	sec := rootCfg.Section("log")
 	keyPrefix := "logger." + loggerName
 
 	disabled := sec.HasKey(keyPrefix+".MODE") && sec.Key(keyPrefix+".MODE").String() == ""
 	if disabled {
-		return
+		return slog.LoggerConfig{}, false
 	}
 
 	modeVal := sec.Key(keyPrefix + ".MODE").String()
@@ -228,33 +236,19 @@ func initLoggerByName(manager *log.LoggerManager, rootCfg ConfigProvider, logger
 		modeVal = Log.Mode
 	}
 
-	var eventWriters []log.EventWriter
-	modes := strings.SplitSeq(modeVal, ",")
-	for modeName := range modes {
+	loggerConfig := slog.LoggerConfig{Name: loggerName}
+	for modeName := range strings.SplitSeq(modeVal, ",") {
 		modeName = strings.TrimSpace(modeName)
 		if modeName == "" {
 			continue
 		}
-		writerName, writerType, writerMode, err := loadLogModeByName(rootCfg, loggerName, modeName)
-		if err != nil {
-			log.FallbackErrorf("Failed to load writer mode %q for logger %s: %v", modeName, loggerName, err)
-			continue
+		sink := loadLogModeByName(rootCfg, loggerName, modeName)
+		if sink.BufferLen == 0 {
+			sink.BufferLen = Log.BufferLen
 		}
-		if writerMode.BufferLen == 0 {
-			writerMode.BufferLen = Log.BufferLen
-		}
-		eventWriter := manager.GetSharedWriter(writerName)
-		if eventWriter == nil {
-			eventWriter, err = manager.NewSharedWriter(writerName, writerType, writerMode)
-			if err != nil {
-				log.FallbackErrorf("Failed to create event writer for logger %s: %v", loggerName, err)
-				continue
-			}
-		}
-		eventWriters = append(eventWriters, eventWriter)
+		loggerConfig.Sinks = append(loggerConfig.Sinks, sink)
 	}
-
-	manager.GetLogger(loggerName).ReplaceAllWriters(eventWriters...)
+	return loggerConfig, true
 }
 
 func InitSQLLoggersForCli(level log.Level) {

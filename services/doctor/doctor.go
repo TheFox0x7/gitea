@@ -63,10 +63,10 @@ type doctorCheckStepLogger struct {
 var _ log.BaseLogger = (*doctorCheckStepLogger)(nil)
 
 func (d *doctorCheckStepLogger) Log(skip int, event *log.Event, format string, v ...any) {
-	levelChar := fmt.Sprintf("[%s]", strings.ToUpper(event.Level.String()[0:1]))
+	levelChar := fmt.Sprintf("[%s]", strings.ToUpper(log.LevelName(event.Level)[0:1]))
 	var levelArg any = levelChar
 	if d.colorize {
-		levelArg = log.NewColoredValue(levelChar, event.Level.ColorAttributes()...)
+		levelArg = log.NewColoredValue(levelChar, log.ColorAttributes(event.Level)...)
 	}
 	args := append([]any{levelArg}, v...)
 	_, _ = fmt.Fprintf(os.Stdout, " - %s "+format+"\n", args...)

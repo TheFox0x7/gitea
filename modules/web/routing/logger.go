@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	startMessage          = log.NewColoredValue("started  ", log.DEBUG.ColorAttributes()...)
-	slowMessage           = log.NewColoredValue("slow     ", log.WARN.ColorAttributes()...)
-	pollingMessage        = log.NewColoredValue("polling  ", log.INFO.ColorAttributes()...)
-	failedMessage         = log.NewColoredValue("failed   ", log.WARN.ColorAttributes()...)
-	completedMessage      = log.NewColoredValue("completed", log.INFO.ColorAttributes()...)
-	unknownHandlerMessage = log.NewColoredValue("completed", log.ERROR.ColorAttributes()...)
+	startMessage          = log.NewColoredValue("started  ", log.ColorAttributes(log.DEBUG)...)
+	slowMessage           = log.NewColoredValue("slow     ", log.ColorAttributes(log.WARN)...)
+	pollingMessage        = log.NewColoredValue("polling  ", log.ColorAttributes(log.INFO)...)
+	failedMessage         = log.NewColoredValue("failed   ", log.ColorAttributes(log.WARN)...)
+	completedMessage      = log.NewColoredValue("completed", log.ColorAttributes(log.INFO)...)
+	unknownHandlerMessage = log.NewColoredValue("completed", log.ColorAttributes(log.ERROR)...)
 )
 
 func logPrinter(logger log.Logger) func(trigger Event, record *requestRecord) {

@@ -4,86 +4,88 @@
 package log
 
 import (
-	"fmt"
 	"os"
+
+	"gitea.dev/modules/slog"
 )
 
 // FallbackErrorf is the last chance to show an error if the logger has internal errors
 func FallbackErrorf(format string, args ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
+	slog.FallbackErrorf(format, args...)
 }
 
+// Deprecated: use slog.GetLevel.
 func GetLevel() Level {
 	return GetLogger(DEFAULT).GetLevel()
 }
 
+// Deprecated: use slog.Log.
 func Log(skip int, level Level, format string, v ...any) {
 	// codeql[disable-next-line=go/clear-text-logging]
 	GetLogger(DEFAULT).Log(skip+1, &Event{Level: level}, format, v...)
 }
 
+// Deprecated: use slog.Log with slog.LevelTrace.
 func Trace(format string, v ...any) {
-	Log(1, TRACE, format, v...)
+	Log(2, TRACE, format, v...)
 }
 
+// Deprecated: use slog.GetLogger(...).LevelEnabled(slog.LevelTrace).
 func IsTrace() bool {
 	return GetLevel() <= TRACE
 }
 
+// Deprecated: use slog.Log with slog.LevelDebug.
 func Debug(format string, v ...any) {
-	Log(1, DEBUG, format, v...)
+	Log(2, DEBUG, format, v...)
 }
 
+// Deprecated: use slog.Log with slog.LevelInfo.
 func Info(format string, v ...any) {
-	Log(1, INFO, format, v...)
+	Log(2, INFO, format, v...)
 }
 
+// Deprecated: use slog.Log with slog.LevelWarn.
 func Warn(format string, v ...any) {
-	Log(1, WARN, format, v...)
+	Log(2, WARN, format, v...)
 }
 
+// Deprecated: use slog.Log with slog.LevelError.
 func Error(format string, v ...any) {
-	Log(1, ERROR, format, v...)
+	Log(2, ERROR, format, v...)
 }
 
+// Deprecated: use slog.Log with slog.LevelError.
 func ErrorWithSkip(skip int, format string, v ...any) {
-	Log(skip+1, ERROR, format, v...)
+	Log(skip+2, ERROR, format, v...)
 }
 
 var OsExiter = os.Exit
 
 // Fatal records fatal log and exit process
+// Deprecated: handle fatal errors explicitly instead.
 func Fatal(format string, v ...any) {
-	Log(1, FATAL, format, v...)
+	Log(2, FATAL, format, v...)
 	GetManager().Close()
 	OsExiter(1)
 }
 
+// Deprecated: use slog.GetLogger.
 func GetLogger(name string) Logger {
 	return GetManager().GetLogger(name)
 }
 
+// Deprecated: use slog.GetLogger(...).GetLevel() != slog.LevelNone.
 func IsLoggerEnabled(name string) bool {
 	return GetManager().GetLogger(name).IsEnabled()
 }
 
+// SetupStderrLogger installs a console logger writing to stderr, it is used
+// before the configuration is loaded (e.g. for CLI commands).
+// Deprecated: use slog.Apply with slog.StderrConfig.
 func SetupStderrLogger(loggerName, writerName string, level Level) {
-	writer := NewEventWriterConsole(writerName, WriterMode{
-		Level:    level,
-		Flags:    FlagsFromBits(LstdFlags),
-		Colorize: CanColorStderr,
-
-		// For most CLI commands, it's better to use Stderr as log output:
-		// this logger is installed early (app.Before), before subcommands like "dump" redirect logging to stderr.
-		// If Stdout, early log output (e.g.: warning during config loading) goes to stdout
-		// and corrupts any command that writes data to stdout (e.g. "gitea dump --file -").
-		//
-		// It is inconsistent with the web server's default console logger from config
-		// (which will be initialized later and use Stdout by default), but there is no other way at the moment:
-		// many existing users depend on such behavior to collect web logs (e.g. fail2ban).
-		//
-		// Maybe need to refactor the logger system again in the future.
-		WriterOption: WriterConsoleOption{Stderr: true},
-	})
-	GetManager().GetLogger(loggerName).ReplaceAllWriters(writer)
+	slogLevel, _ := slog.LevelFromString(level.String())
+	if err := slog.GetManager().Apply(slog.StderrConfig(loggerName, slogLevel)); err != nil {
+		slog.FallbackErrorf("unable to apply slog config: %v", err)
+	}
 }

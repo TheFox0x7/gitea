@@ -49,7 +49,7 @@ func Critical(format string, args ...any) {
 // to stderr so an early fatal is never lost.
 // Deprecated: handle fatal errors explicitly instead.
 func Fatal(format string, args ...any) {
-	if !Default().logPrintf(1, LevelFatal, format, args) {
+	if !Default().logPrintf(1, LevelFatal, format, args, "") {
 		FallbackErrorf(format, args...)
 	}
 	GetManager().Close()

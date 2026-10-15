@@ -4,113 +4,41 @@
 package log
 
 import (
-	"bytes"
-	"strings"
-
-	"gitea.dev/modules/json"
+	"gitea.dev/modules/slog"
 )
 
-// Level is the level of the logger
-type Level int
+// Level is the level of the logger. The numeric values are slog's values, not
+// the historical iota values of the old logging system.
+type Level = slog.Level
 
 const (
-	UNDEFINED Level = iota
-	TRACE
-	DEBUG
-	INFO
-	WARN
-	ERROR
-	FATAL
-	NONE
+	// UNDEFINED means "no level set"; it equals NONE (there is no free numeric
+	// slot in slog's level range). The only in-tree comparison is against an
+	// unset router log level, which is never NONE.
+	UNDEFINED = NONE
+
+	TRACE    = slog.LevelTrace
+	DEBUG    = slog.LevelDebug
+	INFO     = slog.LevelInfo
+	WARN     = slog.LevelWarn
+	ERROR    = slog.LevelError
+	CRITICAL = slog.LevelError // most logger frameworks don't support CRITICAL
+	FATAL    = slog.LevelFatal
+	NONE     = slog.LevelNone
 )
 
-const CRITICAL = ERROR // most logger frameworks doesn't support CRITICAL, and it doesn't seem useful
-
-var toString = map[Level]string{
-	UNDEFINED: "undefined",
-
-	TRACE: "trace",
-	DEBUG: "debug",
-	INFO:  "info",
-	WARN:  "warn",
-	ERROR: "error",
-
-	FATAL: "fatal",
-	NONE:  "none",
+// Deprecated: use slog.LevelName.
+func LevelName(l Level) string {
+	return slog.LevelName(l)
 }
 
-var toLevel = map[string]Level{
-	"undefined": UNDEFINED,
-
-	"trace":   TRACE,
-	"debug":   DEBUG,
-	"info":    INFO,
-	"warn":    WARN,
-	"warning": WARN,
-	"error":   ERROR,
-
-	"fatal": FATAL,
-	"none":  NONE,
-}
-
-var levelToColor = map[Level][]ColorAttribute{
-	TRACE: {Bold, FgCyan},
-	DEBUG: {Bold, FgBlue},
-	INFO:  {Bold, FgGreen},
-	WARN:  {Bold, FgYellow},
-	ERROR: {Bold, FgRed},
-	FATAL: {Bold, BgRed},
-	NONE:  {Reset},
-}
-
-func (l Level) String() string {
-	s, ok := toString[l]
-	if ok {
-		return s
-	}
-	return "info"
-}
-
-func (l Level) ColorAttributes() []ColorAttribute {
-	color, ok := levelToColor[l]
-	if ok {
-		return color
-	}
-	none := levelToColor[NONE]
-	return none
-}
-
-// MarshalJSON takes a Level and turns it into text
-func (l Level) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(`"`)
-	buffer.WriteString(toString[l])
-	buffer.WriteString(`"`)
-	return buffer.Bytes(), nil
-}
-
-// UnmarshalJSON takes text and turns it into a Level
-func (l *Level) UnmarshalJSON(b []byte) error {
-	var tmp any
-	err := json.Unmarshal(b, &tmp)
-	if err != nil {
-		return err
-	}
-
-	switch v := tmp.(type) {
-	case string:
-		*l = LevelFromString(v)
-	case int:
-		*l = LevelFromString(Level(v).String())
-	default:
-		*l = INFO
-	}
-	return nil
-}
-
-// LevelFromString takes a level string and returns a Level
+// Deprecated: use slog.LevelFromString.
 func LevelFromString(level string) Level {
-	if l, ok := toLevel[strings.ToLower(level)]; ok {
-		return l
-	}
-	return INFO
+	l, _ := slog.LevelFromString(level)
+	return l
+}
+
+// Deprecated: use slog.LevelColors.
+func ColorAttributes(l Level) []ColorAttribute {
+	return slog.LevelColors(l)
 }

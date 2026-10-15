@@ -1,121 +1,89 @@
-// Copyright 2023 The Gitea Authors. All rights reserved.
+// Copyright 2019 The Gitea Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package log
 
 import (
-	"fmt"
-	"strconv"
+	"gitea.dev/modules/slog"
 )
 
-const escape = "\033"
-
-// ColorAttribute defines a single SGR Code
-type ColorAttribute int
+// ColorAttribute defines a single SGR color/attribute code.
+type ColorAttribute = slog.ColorAttribute
 
 // Base ColorAttributes
 const (
-	Reset ColorAttribute = iota
-	Bold
-	Faint
-	Italic
-	Underline
-	BlinkSlow
-	BlinkRapid
-	ReverseVideo
-	Concealed
-	CrossedOut
+	Reset        = slog.Reset
+	Bold         = slog.Bold
+	Faint        = slog.Faint
+	Italic       = slog.Italic
+	Underline    = slog.Underline
+	BlinkSlow    = slog.BlinkSlow
+	BlinkRapid   = slog.BlinkRapid
+	ReverseVideo = slog.ReverseVideo
+	Concealed    = slog.Concealed
+	CrossedOut   = slog.CrossedOut
 )
 
 // Foreground text colors
 const (
-	FgBlack ColorAttribute = iota + 30
-	FgRed
-	FgGreen
-	FgYellow
-	FgBlue
-	FgMagenta
-	FgCyan
-	FgWhite
+	FgBlack   = slog.FgBlack
+	FgRed     = slog.FgRed
+	FgGreen   = slog.FgGreen
+	FgYellow  = slog.FgYellow
+	FgBlue    = slog.FgBlue
+	FgMagenta = slog.FgMagenta
+	FgCyan    = slog.FgCyan
+	FgWhite   = slog.FgWhite
 )
 
 // Foreground Hi-Intensity text colors
 const (
-	FgHiBlack ColorAttribute = iota + 90
-	FgHiRed
-	FgHiGreen
-	FgHiYellow
-	FgHiBlue
-	FgHiMagenta
-	FgHiCyan
-	FgHiWhite
+	FgHiBlack   = slog.FgHiBlack
+	FgHiRed     = slog.FgHiRed
+	FgHiGreen   = slog.FgHiGreen
+	FgHiYellow  = slog.FgHiYellow
+	FgHiBlue    = slog.FgHiBlue
+	FgHiMagenta = slog.FgHiMagenta
+	FgHiCyan    = slog.FgHiCyan
+	FgHiWhite   = slog.FgHiWhite
 )
 
 // Background text colors
 const (
-	BgBlack ColorAttribute = iota + 40
-	BgRed
-	BgGreen
-	BgYellow
-	BgBlue
-	BgMagenta
-	BgCyan
-	BgWhite
+	BgBlack   = slog.BgBlack
+	BgRed     = slog.BgRed
+	BgGreen   = slog.BgGreen
+	BgYellow  = slog.BgYellow
+	BgBlue    = slog.BgBlue
+	BgMagenta = slog.BgMagenta
+	BgCyan    = slog.BgCyan
+	BgWhite   = slog.BgWhite
 )
 
 // Background Hi-Intensity text colors
 const (
-	BgHiBlack ColorAttribute = iota + 100
-	BgHiRed
-	BgHiGreen
-	BgHiYellow
-	BgHiBlue
-	BgHiMagenta
-	BgHiCyan
-	BgHiWhite
+	BgHiBlack   = slog.BgHiBlack
+	BgHiRed     = slog.BgHiRed
+	BgHiGreen   = slog.BgHiGreen
+	BgHiYellow  = slog.BgHiYellow
+	BgHiBlue    = slog.BgHiBlue
+	BgHiMagenta = slog.BgHiMagenta
+	BgHiCyan    = slog.BgHiCyan
+	BgHiWhite   = slog.BgHiWhite
 )
+
+// ColoredValue wraps a value and renders it with ANSI colors when formatting.
+type ColoredValue = slog.ColoredValue
+
+// NewColoredValue creates a ColoredValue, it renders with colors when formatted.
+// Deprecated: use slog.NewColoredValue.
+func NewColoredValue(v any, color ...ColorAttribute) *ColoredValue {
+	return slog.NewColoredValue(v, color...)
+}
 
 var (
-	resetBytes   = ColorBytes(Reset)
-	fgCyanBytes  = ColorBytes(FgCyan)
-	fgGreenBytes = ColorBytes(FgGreen)
+	// CanColorStdout reports if we can color the Stdout.
+	CanColorStdout = slog.CanColorStdout
+	// CanColorStderr reports if we can color the Stderr.
+	CanColorStderr = slog.CanColorStderr
 )
-
-type ColoredValue struct {
-	v      any
-	colors []ColorAttribute
-}
-
-var _ fmt.Formatter = (*ColoredValue)(nil)
-
-func (c *ColoredValue) Format(f fmt.State, verb rune) {
-	_, _ = f.Write(ColorBytes(c.colors...))
-	s := fmt.Sprintf(fmt.FormatString(f, verb), c.v)
-	_, _ = f.Write([]byte(s))
-	_, _ = f.Write(resetBytes)
-}
-
-func (c *ColoredValue) Value() any {
-	return c.v
-}
-
-func NewColoredValue(v any, color ...ColorAttribute) *ColoredValue {
-	return &ColoredValue{v: v, colors: color}
-}
-
-// ColorBytes converts a list of ColorAttributes to a byte array
-func ColorBytes(attrs ...ColorAttribute) []byte {
-	bytes := make([]byte, 0, 20)
-	bytes = append(bytes, escape[0], '[')
-	if len(attrs) > 0 {
-		bytes = append(bytes, strconv.Itoa(int(attrs[0]))...)
-		for _, a := range attrs[1:] {
-			bytes = append(bytes, ';')
-			bytes = append(bytes, strconv.Itoa(int(a))...)
-		}
-	} else {
-		bytes = append(bytes, strconv.Itoa(int(Bold))...)
-	}
-	bytes = append(bytes, 'm')
-	return bytes
-}

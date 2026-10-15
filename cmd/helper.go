@@ -16,6 +16,7 @@ import (
 	"gitea.dev/models/db"
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
+	"gitea.dev/modules/slog"
 
 	"github.com/urfave/cli/v3"
 )
@@ -90,13 +91,21 @@ func setupConsoleLogger(level log.Level, colorize bool, out io.Writer) {
 		panic("setupConsoleLogger can only be used with os.Stdout or os.Stderr")
 	}
 
-	writeMode := log.WriterMode{
-		Level:        level,
-		Colorize:     colorize,
-		WriterOption: log.WriterConsoleOption{Stderr: out == os.Stderr},
+	slogLevel, _ := slog.LevelFromString(level.String())
+	err := slog.GetManager().Apply(slog.Config{Loggers: []slog.LoggerConfig{{
+		Name: slog.DefaultName,
+		Sinks: []slog.SinkConfig{{
+			Name:     "console-default",
+			Type:     "console",
+			Level:    slogLevel,
+			Flags:    slog.FlagsFromString("stdflags"),
+			Colorize: colorize,
+			Console:  &slog.ConsoleSinkOptions{Stderr: out == os.Stderr},
+		}},
+	}}})
+	if err != nil {
+		slog.FallbackErrorf("unable to apply console logger: %v", err)
 	}
-	writer := log.NewEventWriterConsole("console-default", writeMode)
-	log.GetManager().GetLogger(log.DEFAULT).ReplaceAllWriters(writer)
 }
 
 func globalBool(c *cli.Command, name string) bool {

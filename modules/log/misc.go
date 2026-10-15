@@ -7,11 +7,26 @@ import (
 	"io"
 )
 
+// LoggerToWriter wraps a log function to an io.Writer
+func LoggerToWriter(logf func(format string, args ...any)) io.Writer {
+	return &loggerToWriter{logf: logf}
+}
+
+type loggerToWriter struct {
+	logf func(format string, args ...any)
+}
+
+func (p *loggerToWriter) Write(bs []byte) (int, error) {
+	p.logf("%s", string(bs))
+	return len(bs), nil
+}
+
 type baseToLogger struct {
 	base BaseLogger
 }
 
 // BaseLoggerToGeneralLogger wraps a BaseLogger (which only has Log() function) to a Logger (which has Info() function)
+// Deprecated: depend on the slog facade directly.
 func BaseLoggerToGeneralLogger(b BaseLogger) Logger {
 	l := &baseToLogger{base: b}
 	return l
@@ -30,6 +45,12 @@ func (s *baseToLogger) GetLevel() Level {
 
 func (s *baseToLogger) LevelEnabled(level Level) bool {
 	return s.base.GetLevel() <= level
+}
+
+// IsEnabled reports whether any sink would accept an event
+func (s *baseToLogger) IsEnabled() bool {
+	level := s.base.GetLevel()
+	return level != NONE && level < FATAL
 }
 
 func (s *baseToLogger) Trace(format string, v ...any) {
@@ -54,26 +75,4 @@ func (s *baseToLogger) Error(format string, v ...any) {
 
 func (s *baseToLogger) Critical(format string, v ...any) {
 	s.base.Log(1, &Event{Level: CRITICAL}, format, v...)
-}
-
-type PrintfLogger struct {
-	Logf func(format string, args ...any)
-}
-
-func (p *PrintfLogger) Printf(format string, args ...any) {
-	p.Logf(format, args...)
-}
-
-type loggerToWriter struct {
-	logf func(format string, args ...any)
-}
-
-func (p *loggerToWriter) Write(bs []byte) (int, error) {
-	p.logf("%s", string(bs))
-	return len(bs), nil
-}
-
-// LoggerToWriter wraps a log function to an io.Writer
-func LoggerToWriter(logf func(format string, args ...any)) io.Writer {
-	return &loggerToWriter{logf: logf}
 }

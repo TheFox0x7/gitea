@@ -5,69 +5,77 @@ package setting
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"gitea.dev/modules/json"
-	"gitea.dev/modules/log"
+	"gitea.dev/modules/slog"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func initLoggersByConfig(t *testing.T, config string) (*log.LoggerManager, func()) {
-	oldLogConfig := Log
-	Log = LogGlobalConfig{}
-	defer func() {
-		Log = oldLogConfig
-	}()
-
-	cfg, err := NewConfigProviderFromData(config)
-	assert.NoError(t, err)
-
-	manager := log.NewManager()
-	initManagedLoggers(manager, cfg)
-	return manager, manager.Close
-}
 
 func toJSON(v any) string {
 	b, _ := json.MarshalIndent(v, "", "\t")
 	return string(b)
 }
 
+func initLoggersByConfig(t *testing.T, config string) (*slog.Manager, func()) {
+	oldLogConfig := Log
+	Log = LogGlobalConfig{}
+	t.Cleanup(func() {
+		Log = oldLogConfig
+	})
+
+	cfg, err := NewConfigProviderFromData(config)
+	assert.NoError(t, err)
+
+	manager := slog.NewManager()
+	initManagedLoggers(manager, cfg)
+	return manager, manager.Close
+}
+
+// loggerDumpJSON returns the sinks of a logger in the shape of DumpWriters:
+// map[sinkName]sinkDetails, "{}" for a missing or sink-less logger.
+func loggerDumpJSON(t *testing.T, manager *slog.Manager, name string) string {
+	t.Helper()
+	dump := manager.Dump()
+	loggers := dump["loggers"].(map[string]any) //nolint:forcetypeassert // constructed by slog.Manager.Dump
+	lm, ok := loggers[name]
+	if !ok {
+		return "{}"
+	}
+	sinkNames := lm.(map[string]any)["sinks"].([]string) //nolint:forcetypeassert // constructed by slog.Manager.Dump
+	sinks := dump["sinks"].(map[string]any)              //nolint:forcetypeassert // constructed by slog.Manager.Dump
+	eventWriters := map[string]any{}
+	for _, sn := range sinkNames {
+		eventWriters[sn] = sinks[sn]
+	}
+	return toJSON(eventWriters)
+}
+
 func TestLogConfigDefault(t *testing.T) {
 	manager, managerClose := initLoggersByConfig(t, ``)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"console": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": false
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	}
 }
 `
 
-	dump := manager.GetLogger(log.DEFAULT).DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
-
-	dump = manager.GetLogger("router").DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("xorm").DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
 }
 
 func TestLogConfigDisable(t *testing.T) {
@@ -78,35 +86,25 @@ logger.xorm.MODE =
 `)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"console": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": false
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	}
 }
 `
 
-	dump := manager.GetLogger(log.DEFAULT).DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
-
-	dump = manager.GetLogger("router").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
-
-	dump = manager.GetLogger("xorm").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "router"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "xorm"))
 }
 
 func TestLogConfigLegacyDefault(t *testing.T) {
@@ -116,35 +114,25 @@ MODE = console
 `)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"console": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": false
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	}
 }
 `
 
-	dump := manager.GetLogger(log.DEFAULT).DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
-
-	dump = manager.GetLogger("router").DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("xorm").DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
 }
 
 func TestLogConfigLegacyMode(t *testing.T) {
@@ -153,6 +141,7 @@ func TestLogConfigLegacyMode(t *testing.T) {
 	tempPath := func(file string) string {
 		return filepath.Join(tempDir, file)
 	}
+	_ = tempPath // file names are owned by the file sink writer, not exposed by Dump
 
 	manager, managerClose := initLoggersByConfig(t, `
 [log]
@@ -163,60 +152,38 @@ ACCESS = file
 `)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"file": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Compress": true,
-			"CompressionLevel": -1,
-			"DailyRotate": true,
-			"FileName": "$FILENAME",
-			"LogRotate": true,
-			"MaxDays": 7,
-			"MaxSize": 268435456
-		},
-		"WriterType": "file"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "file"
 	}
 }
 `
-	writerDumpAccess := `
+	sinkDumpAccess := `
 {
 	"file.access": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "none",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Compress": true,
-			"CompressionLevel": -1,
-			"DailyRotate": true,
-			"FileName": "$FILENAME",
-			"LogRotate": true,
-			"MaxDays": 7,
-			"MaxSize": 268435456
-		},
-		"WriterType": "file"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "none",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "file"
 	}
 }
 `
-	dump := manager.GetLogger(log.DEFAULT).DumpWriters()
-	require.JSONEq(t, strings.ReplaceAll(writerDump, "$FILENAME", tempPath("gitea.log")), toJSON(dump))
-
-	dump = manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, strings.ReplaceAll(writerDumpAccess, "$FILENAME", tempPath("access.log")), toJSON(dump))
-
-	dump = manager.GetLogger("router").DumpWriters()
-	require.JSONEq(t, strings.ReplaceAll(writerDump, "$FILENAME", tempPath("gitea.log")), toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
+	require.JSONEq(t, sinkDumpAccess, loggerDumpJSON(t, manager, "access"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
 }
 
 func TestLogConfigLegacyModeDisable(t *testing.T) {
@@ -229,11 +196,8 @@ ENABLE_ACCESS_LOG = false
 `)
 	defer managerClose()
 
-	dump := manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
-
-	dump = manager.GetLogger("router").DumpWriters()
-	require.JSONEq(t, "{}", toJSON(dump))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "router"))
 }
 
 func TestLogConfigNewConfig(t *testing.T) {
@@ -248,70 +212,55 @@ LEVEL = warn
 [log.console-1]
 MODE = console
 LEVEL = error
+FORMAT = logfmt
 STDERR = true
 `)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"console": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "warn",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": false
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "warn",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	},
 	"console-1": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "error",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": true
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "logfmt",
+		"level": "error",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	}
 }
 `
-	writerDumpAccess := `
+	sinkDumpAccess := `
 {
 	"console.access": {
-		"BufferLen": 10000,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "none",
-		"Level": "warn",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Stderr": false
-		},
-		"WriterType": "console"
+		"bufferLen": 10000,
+		"colorize": false,
+		"flags": "none",
+		"format": "legacy",
+		"level": "warn",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console"
 	}
 }
 `
-	dump := manager.GetLogger("xorm").DumpWriters()
-	require.JSONEq(t, writerDump, toJSON(dump))
-
-	dump = manager.GetLogger("access").DumpWriters()
-	require.JSONEq(t, writerDumpAccess, toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
+	require.JSONEq(t, sinkDumpAccess, loggerDumpJSON(t, manager, "access"))
 }
 
 func TestLogConfigModeFile(t *testing.T) {
 	tempDir := t.TempDir()
-
-	tempPath := func(file string) string {
-		return filepath.Join(tempDir, file)
-	}
 
 	manager, managerClose := initLoggersByConfig(t, `
 [log]
@@ -323,7 +272,6 @@ MODE = file, file1
 MODE = file
 LEVEL = error
 STACKTRACE_LEVEL = fatal
-EXPRESSION = filter
 FLAGS = medfile
 PREFIX = "[Prefix] "
 FILE_NAME = file-xxx.log
@@ -336,52 +284,29 @@ COMPRESSION_LEVEL = 4
 `)
 	defer managerClose()
 
-	writerDump := `
+	sinkDump := `
 {
 	"file": {
-		"BufferLen": 10,
-		"Colorize": false,
-		"Expression": "",
-		"Flags": "stdflags",
-		"Level": "info",
-		"Prefix": "",
-		"StacktraceLevel": "none",
-		"WriterOption": {
-			"Compress": true,
-			"CompressionLevel": -1,
-			"DailyRotate": true,
-			"FileName": "$FILENAME-0",
-			"LogRotate": true,
-			"MaxDays": 7,
-			"MaxSize": 268435456
-		},
-		"WriterType": "file"
+		"bufferLen": 10,
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "info",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "file"
 	},
 	"file1": {
-		"BufferLen": 10,
-		"Colorize": false,
-		"Expression": "filter",
-		"Flags": "medfile",
-		"Level": "error",
-		"Prefix": "[Prefix] ",
-		"StacktraceLevel": "fatal",
-		"WriterOption": {
-			"Compress": false,
-			"CompressionLevel": 4,
-			"DailyRotate": false,
-			"FileName": "$FILENAME-1",
-			"LogRotate": false,
-			"MaxDays": 90,
-			"MaxSize": 2
-		},
-		"WriterType": "file"
+		"bufferLen": 10,
+		"colorize": false,
+		"flags": "medfile",
+		"format": "legacy",
+		"level": "error",
+		"prefix": "[Prefix] ",
+		"stacktraceLevel": "fatal",
+		"type": "file"
 	}
 }
 `
-
-	dump := manager.GetLogger(log.DEFAULT).DumpWriters()
-	expected := writerDump
-	expected = strings.ReplaceAll(expected, "$FILENAME-0", tempPath("gitea.log"))
-	expected = strings.ReplaceAll(expected, "$FILENAME-1", tempPath("file-xxx.log"))
-	require.JSONEq(t, expected, toJSON(dump))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
 }

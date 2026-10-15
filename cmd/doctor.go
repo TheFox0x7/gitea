@@ -18,6 +18,7 @@ import (
 	"gitea.dev/modules/container"
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
+	"gitea.dev/modules/slog"
 	"gitea.dev/services/doctor"
 
 	"github.com/urfave/cli/v3"
@@ -151,13 +152,20 @@ func setupDoctorDefaultLogger(cmd *cli.Command, colorize bool) {
 		setupConsoleLogger(log.TRACE, colorize, os.Stdout)
 	default:
 		logFile, _ = filepath.Abs(logFile)
-		writeMode := log.WriterMode{Level: log.TRACE, WriterOption: log.WriterFileOption{FileName: logFile}}
-		writer, err := log.NewEventWriter("console-to-file", "file", writeMode)
+		slogLevel, _ := slog.LevelFromString(log.TRACE.String())
+		err := slog.GetManager().Apply(slog.Config{Loggers: []slog.LoggerConfig{{
+			Name: slog.DefaultName,
+			Sinks: []slog.SinkConfig{{
+				Name:  "console-to-file",
+				Type:  "file",
+				Level: slogLevel,
+				File:  &slog.FileSinkOptions{FileName: logFile},
+			}},
+		}}})
 		if err != nil {
 			log.FallbackErrorf("unable to create file log writer: %v", err)
 			return
 		}
-		log.GetManager().GetLogger(log.DEFAULT).ReplaceAllWriters(writer)
 	}
 }
 

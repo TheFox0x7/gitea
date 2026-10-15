@@ -5,18 +5,17 @@ package test
 
 import (
 	"context"
-	"strconv"
+	stdslog "log/slog"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"gitea.dev/modules/log"
+	"gitea.dev/modules/slog"
 )
 
+// LogChecker inspects the log output of a logger, it implements slog.Handler
+// and is attached to a named logger.
 type LogChecker struct {
-	*log.EventWriterBaseImpl
-
 	filterMessages []string
 	filtered       []bool
 
@@ -26,44 +25,33 @@ type LogChecker struct {
 	mu sync.Mutex
 }
 
-func (lc *LogChecker) Run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-lc.Queue:
-			if !ok {
-				return
-			}
-			lc.checkLogEvent(event)
-		}
-	}
+func (lc *LogChecker) Enabled(_ context.Context, _ stdslog.Level) bool {
+	return true
 }
 
-func (lc *LogChecker) checkLogEvent(event *log.EventFormatted) {
+func (lc *LogChecker) Handle(_ context.Context, r stdslog.Record) error {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	for i, msg := range lc.filterMessages {
-		if strings.Contains(event.Origin.MsgSimpleText, msg) {
+	msg := r.Message
+	for i, m := range lc.filterMessages {
+		if strings.Contains(msg, m) {
 			lc.filtered[i] = true
 		}
 	}
-	if strings.Contains(event.Origin.MsgSimpleText, lc.stopMark) {
+	if strings.Contains(msg, lc.stopMark) {
 		lc.stopped = true
 	}
+	return nil
 }
 
-var checkerIndex atomic.Int64
+func (lc *LogChecker) WithAttrs(attrs []stdslog.Attr) stdslog.Handler { return lc }
+
+func (lc *LogChecker) WithGroup(name string) stdslog.Handler { return lc }
 
 func NewLogChecker(namePrefix string) (logChecker *LogChecker, cancel func()) {
-	logger := log.GetManager().GetLogger(namePrefix)
-	newCheckerIndex := checkerIndex.Add(1)
-	writerName := namePrefix + "-" + strconv.FormatInt(newCheckerIndex, 10)
-
 	lc := &LogChecker{}
-	lc.EventWriterBaseImpl = log.NewEventWriterBase(writerName, "test-log-checker", log.WriterMode{})
-	logger.AddWriters(lc)
-	return lc, func() { _ = logger.RemoveWriter(writerName) }
+	slog.GetManager().AddHandler(namePrefix, lc)
+	return lc, func() { slog.GetManager().RemoveHandler(namePrefix, lc) }
 }
 
 // Filter will make the `Check` function to check if these logs are outputted.

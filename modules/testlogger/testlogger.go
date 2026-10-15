@@ -6,6 +6,7 @@ package testlogger
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/queue"
+	"gitea.dev/modules/slog"
 	"gitea.dev/modules/util"
 )
 
@@ -149,19 +151,8 @@ func PrintCurrentTest(t testing.TB, skip ...int) func() {
 	}
 }
 
-// TestLogEventWriter is a logger which will write to the testing log
-type TestLogEventWriter struct {
-	*log.EventWriterBaseImpl
-}
-
-// newTestLoggerWriter creates a TestLogEventWriter as a log.LoggerProvider
-func newTestLoggerWriter(name string, mode log.WriterMode) log.EventWriter {
-	w := &TestLogEventWriter{}
-	w.EventWriterBaseImpl = log.NewEventWriterBase(name, "test-log-writer", mode)
-	w.OutputWriteCloser = WriterCloser
-	return w
-}
-
+// Init registers the "test" sink type, which writes formatted log lines to
+// the testing framework's log via WriterCloser.
 func Init() {
 	const relFilePath = "modules/testlogger/testlogger.go"
 	_, filename, _, _ := runtime.Caller(0)
@@ -170,7 +161,9 @@ func Init() {
 	}
 	prefix = strings.TrimSuffix(filename, relFilePath)
 
-	log.RegisterEventWriter("test", newTestLoggerWriter)
+	slog.RegisterSinkType("test", func(slog.SinkConfig) (io.WriteCloser, error) {
+		return WriterCloser, nil
+	})
 }
 
 // MainErrorf is used to report an error from TestMain and return a non-zero value to indicate the failure

@@ -113,7 +113,9 @@ func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error
 			switch sc.Type {
 			case "console", "file", "conn":
 			default:
-				return fmt.Errorf("invalid log sink type %q for sink %q", sc.Type, sc.Name)
+				if !hasSinkType(sc.Type) {
+					return fmt.Errorf("invalid log sink type %q for sink %q", sc.Type, sc.Name)
+				}
 			}
 			if sc.Format != "" && sc.Format != FormatLegacy && sc.Format != FormatLogfmt && sc.Format != FormatJSON {
 				return fmt.Errorf("invalid log sink format %q for sink %q", sc.Format, sc.Name)
@@ -249,7 +251,11 @@ func (m *Manager) newSinkWriter(cfg SinkConfig) (io.WriteCloser, error) {
 			writeTimeout:   writeTimeout,
 		}, nil
 	default:
-		return nil, fmt.Errorf("invalid log sink type %q", cfg.Type)
+		w, err := openRegisteredSink(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return w, nil
 	}
 }
 

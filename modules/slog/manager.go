@@ -4,6 +4,7 @@
 package slog
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
@@ -94,6 +95,34 @@ func (m *Manager) Close() {
 	m.defaultLogger.Store(nil)
 }
 
+// AddHandler attaches a plain external slog.Handler to a named logger. It
+// receives records without printf metadata and contributes no sinks.
+func (m *Manager) AddHandler(loggerName string, h slog.Handler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.getLoggerLocked(loggerName)
+	old := l.handler.Load()
+	children := make([]child, 0, len(old.children)+1)
+	children = append(children, old.children...)
+	children = append(children, handlerChild{h})
+	l.swapHandler(newMultiHandlerChildren(children))
+}
+
+// RemoveHandler detaches a previously added external slog.Handler.
+func (m *Manager) RemoveHandler(loggerName string, h slog.Handler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.getLoggerLocked(loggerName)
+	old := l.handler.Load()
+	children := make([]child, 0, len(old.children))
+	for _, c := range old.children {
+		if hc, ok := c.(handlerChild); !ok || hc.h != h {
+			children = append(children, c)
+		}
+	}
+	l.swapHandler(newMultiHandlerChildren(children))
+}
+
 // liveSinkStates returns the deduplicated sink states of all logger trees.
 // Callers must hold m.mu.
 func (m *Manager) liveSinkStates() []*sinkState {
@@ -123,14 +152,21 @@ func (m *Manager) Dump() map[string]any {
 			"stacktraceLevel": LevelName(st.stacktraceLevel),
 			"colorize":        st.colorize,
 			"prefix":          st.prefix,
+			"flags":           st.flags.String(),
+			"bufferLen":       st.bufferLen,
 		}
 	}
 	dump := map[string]any{"sinks": sinks}
 	loggers := map[string]any{}
 	for name, l := range m.loggers {
+		sinkNames := make([]string, 0, 2)
+		for _, st := range l.handler.Load().sinkStates() {
+			sinkNames = append(sinkNames, st.name)
+		}
 		loggers[name] = map[string]any{
 			"level":   LevelName(l.GetLevel()),
 			"enabled": l.LevelEnabled(LevelInfo),
+			"sinks":   sinkNames,
 		}
 	}
 	dump["loggers"] = loggers

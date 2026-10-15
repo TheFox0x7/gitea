@@ -9,13 +9,24 @@ import (
 	"slices"
 )
 
-// multiHandler fans a record out to all sink frontends. Enabled is the OR of
+// child is one node of a logger tree: either a sinkFrontend (printf metadata
+// aware) or a plain external slog.Handler (metadata-free).
+type child interface {
+	slog.Handler
+	enabled(level Level) bool
+	handle(r slog.Record, hi *hiddenInfo)
+	forkWithAttrs(attrs []slog.Attr) child
+	forkWithGroup(name string) child
+	states() []*sinkState
+}
+
+// multiHandler fans a record out to all tree children. Enabled is the OR of
 // the children, so a record is built once if any sink wants it; dispatch
 // re-checks each child's level so per-sink formatting only happens for sinks
 // that pass. The cached hints (needsSource, wantsRawArgs, needsMessage,
 // stacktraceLevel, level) are aggregated from the sinks when the tree is built.
 type multiHandler struct {
-	children []*sinkFrontend
+	children []child
 
 	needsSource     bool
 	wantsRawArgs    bool
@@ -27,26 +38,43 @@ type multiHandler struct {
 var _ slog.Handler = (*multiHandler)(nil)
 
 func newMultiHandler(frontends []*sinkFrontend) *multiHandler {
+	children := make([]child, len(frontends))
+	for i, f := range frontends {
+		children[i] = f
+	}
+	return newMultiHandlerChildren(children)
+}
+
+func newMultiHandlerChildren(children []child) *multiHandler {
 	h := &multiHandler{
-		children:        make([]*sinkFrontend, len(frontends)),
+		children:        slices.Clone(children),
 		stacktraceLevel: LevelNone,
 		level:           LevelNone,
 	}
-	for i, f := range frontends {
-		h.children[i] = f
-		if f.st.needsSource() {
-			h.needsSource = true
-		}
-		if f.st.wantsRawArgs() {
-			h.wantsRawArgs = true
-		} else {
+	for _, c := range h.children {
+		states := c.states()
+		if len(states) == 0 {
+			// plain external handlers render Record.Message and may resolve
+			// Record.Source themselves
 			h.needsMessage = true
+			h.needsSource = true
+			continue
 		}
-		if f.st.format == FormatLegacy && f.st.stacktraceLevel < h.stacktraceLevel {
-			h.stacktraceLevel = f.st.stacktraceLevel
-		}
-		if f.st.level.Level() < h.level {
-			h.level = f.st.level.Level()
+		for _, st := range states {
+			if st.needsSource() {
+				h.needsSource = true
+			}
+			if st.wantsRawArgs() {
+				h.wantsRawArgs = true
+			} else {
+				h.needsMessage = true
+			}
+			if st.format == FormatLegacy && st.stacktraceLevel < h.stacktraceLevel {
+				h.stacktraceLevel = st.stacktraceLevel
+			}
+			if st.level.Level() < h.level {
+				h.level = st.level.Level()
+			}
 		}
 	}
 	return h
@@ -79,18 +107,26 @@ func (h *multiHandler) handle(r slog.Record, hi *hiddenInfo) {
 }
 
 func (h *multiHandler) sinkStates() []*sinkState {
-	sts := make([]*sinkState, len(h.children))
-	for i, f := range h.children {
-		sts[i] = f.st
+	var sts []*sinkState
+	for _, f := range h.children {
+		sts = append(sts, f.states()...)
 	}
 	return sts
+}
+
+func (h *multiHandler) sinkNames() []string {
+	var names []string
+	for _, st := range h.sinkStates() {
+		names = append(names, st.name)
+	}
+	return names
 }
 
 func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	nh := *h
 	nh.children = slices.Clone(h.children)
 	for i, c := range h.children {
-		nh.children[i] = c.cloneWithAttrs(attrs)
+		nh.children[i] = c.forkWithAttrs(attrs)
 	}
 	return &nh
 }
@@ -102,7 +138,47 @@ func (h *multiHandler) WithGroup(name string) slog.Handler {
 	nh := *h
 	nh.children = slices.Clone(h.children)
 	for i, c := range h.children {
-		nh.children[i] = c.cloneWithGroup(name)
+		nh.children[i] = c.forkWithGroup(name)
 	}
 	return &nh
 }
+
+// handlerChild adapts a plain external slog.Handler to the child interface.
+// It never receives printf metadata and contributes no sinks.
+type handlerChild struct {
+	h slog.Handler
+}
+
+func (c handlerChild) Enabled(ctx context.Context, level Level) bool {
+	return c.h.Enabled(ctx, level)
+}
+
+func (c handlerChild) enabled(level Level) bool {
+	return c.h.Enabled(context.Background(), level)
+}
+
+func (c handlerChild) Handle(ctx context.Context, r slog.Record) error {
+	return c.h.Handle(ctx, r)
+}
+
+func (c handlerChild) handle(r slog.Record, _ *hiddenInfo) {
+	_ = c.h.Handle(context.Background(), r)
+}
+
+func (c handlerChild) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return handlerChild{c.h.WithAttrs(attrs)}
+}
+
+func (c handlerChild) WithGroup(name string) slog.Handler {
+	return handlerChild{c.h.WithGroup(name)}
+}
+
+func (c handlerChild) forkWithAttrs(attrs []slog.Attr) child {
+	return handlerChild{c.h.WithAttrs(attrs)}
+}
+
+func (c handlerChild) forkWithGroup(name string) child {
+	return handlerChild{c.h.WithGroup(name)}
+}
+
+func (c handlerChild) states() []*sinkState { return nil }

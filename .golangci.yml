@@ -151,6 +151,16 @@ linters:
           - staticcheck
           - unparam
         path: _test\.go
+      # the modules/log compatibility shim is deprecated by design, its call
+      # sites migrate incrementally (see slog_migration_plan.md)
+      - linters:
+          - staticcheck
+        text: "SA1019: gitea.dev/modules/log\\."
+      # inside the shim, forwarding to slog's deprecated facade is the job
+      - linters:
+          - staticcheck
+        path: ^modules/log/
+        text: "SA1019:"
       - linters:
           - dupl
         path: modelmigration/v

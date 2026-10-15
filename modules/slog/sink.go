@@ -294,3 +294,15 @@ func (f *sinkFrontend) cloneWithGroup(name string) *sinkFrontend {
 	}
 	return &nf
 }
+
+func (f *sinkFrontend) forkWithAttrs(attrs []slog.Attr) child {
+	return f.cloneWithAttrs(attrs)
+}
+
+func (f *sinkFrontend) forkWithGroup(name string) child {
+	return f.cloneWithGroup(name)
+}
+
+func (f *sinkFrontend) states() []*sinkState {
+	return []*sinkState{f.st}
+}

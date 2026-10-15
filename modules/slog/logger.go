@@ -56,6 +56,11 @@ func (l *Logger) GetLevel() Level {
 	return l.handler.Load().level
 }
 
+// SinkNames returns the names of the sinks attached to this logger.
+func (l *Logger) SinkNames() []string {
+	return l.handler.Load().sinkNames()
+}
+
 func (l *Logger) LevelEnabled(level Level) bool {
 	return l.handler.Load().Enabled(context.Background(), level)
 }
@@ -65,37 +70,37 @@ func (l *Logger) LevelEnabled(level Level) bool {
 //
 // Deprecated: printf-style logging produces no structured output; use Slog() instead.
 func (l *Logger) Log(skip int, level Level, format string, args ...any) {
-	l.logPrintf(skip, level, format, args)
+	l.logPrintf(skip, level, format, args, "")
 }
 
 // Deprecated: use Slog().Debug(...) instead.
 func (l *Logger) Trace(format string, args ...any) {
-	l.logPrintf(1, LevelTrace, format, args)
+	l.logPrintf(1, LevelTrace, format, args, "")
 }
 
 // Deprecated: use Slog().Debug(...) instead.
 func (l *Logger) Debug(format string, args ...any) {
-	l.logPrintf(1, LevelDebug, format, args)
+	l.logPrintf(1, LevelDebug, format, args, "")
 }
 
 // Deprecated: use Slog().Info(...) instead.
 func (l *Logger) Info(format string, args ...any) {
-	l.logPrintf(1, LevelInfo, format, args)
+	l.logPrintf(1, LevelInfo, format, args, "")
 }
 
 // Deprecated: use Slog().Warn(...) instead.
 func (l *Logger) Warn(format string, args ...any) {
-	l.logPrintf(1, LevelWarn, format, args)
+	l.logPrintf(1, LevelWarn, format, args, "")
 }
 
 // Deprecated: use Slog().Error(...) instead.
 func (l *Logger) Error(format string, args ...any) {
-	l.logPrintf(1, LevelError, format, args)
+	l.logPrintf(1, LevelError, format, args, "")
 }
 
 // Deprecated: use Slog().Error(...) instead.
 func (l *Logger) Critical(format string, args ...any) {
-	l.logPrintf(1, LevelCritical, format, args)
+	l.logPrintf(1, LevelCritical, format, args, "")
 }
 
 // Fatal logs at FATAL, flushes the manager and exits the process. If no sink
@@ -103,11 +108,17 @@ func (l *Logger) Critical(format string, args ...any) {
 // to stderr so an early fatal is never lost.
 // Deprecated: use Slog().Log(ctx, LevelFatal, ...) plus explicit exit handling instead.
 func (l *Logger) Fatal(format string, args ...any) {
-	if !l.logPrintf(1, LevelFatal, format, args) {
+	if !l.logPrintf(1, LevelFatal, format, args, "") {
 		FallbackErrorf(format, args...)
 	}
 	l.mgr.Close()
 	OsExiter(1)
+}
+
+// LogWithCaller logs a printf-style message with a prefilled caller name
+// (e.g. a route pattern) overriding caller resolution.
+func (l *Logger) LogWithCaller(skip int, level Level, caller, format string, args ...any) {
+	l.logPrintf(skip, level, format, args, caller)
 }
 
 // logPrintf is the printf pipeline: level gate (one atomic OR check), lazy PC
@@ -115,7 +126,7 @@ func (l *Logger) Fatal(format string, args ...any) {
 // ColoredValue), then dispatch. Raw format+args and the stacktrace travel
 // beside the record as *hiddenInfo, never as record attrs. It reports whether
 // any sink accepted the event.
-func (l *Logger) logPrintf(skip int, level Level, format string, args []any) bool {
+func (l *Logger) logPrintf(skip int, level Level, format string, args []any, prefillCaller string) bool {
 	h := l.handler.Load()
 	if !h.Enabled(context.Background(), level) {
 		return false
@@ -168,13 +179,19 @@ func (l *Logger) logPrintf(skip int, level Level, format string, args []any) boo
 	if h.wantsRawArgs {
 		hi = &hiddenInfo{format: format, args: args}
 	}
+	if prefillCaller != "" {
+		if hi == nil {
+			hi = &hiddenInfo{}
+		}
+		hi.caller = prefillCaller
+	}
 	if level >= h.stacktraceLevel {
 		if hi == nil {
 			hi = &hiddenInfo{}
 		}
 		hi.stacktrace = Stack(skip + 1)
 	}
-	if h.needsSource {
+	if h.needsSource && (hi == nil || hi.caller == "") {
 		if hi == nil {
 			hi = &hiddenInfo{}
 		}
