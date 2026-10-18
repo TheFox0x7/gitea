@@ -120,7 +120,7 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 					return fmt.Errorf("invalid log sink type %q for sink %q", sc.Type, sc.Name)
 				}
 			}
-			if sc.Format != "" && sc.Format != FormatLegacy && sc.Format != FormatLogfmt && sc.Format != FormatJSON {
+			if sc.Format != "" && sc.Format != FormatLegacy && sc.Format != FormatLogfmt && sc.Format != FormatJSON && sc.Format != FormatCLF {
 				return fmt.Errorf("invalid log sink format %q for sink %q", sc.Format, sc.Name)
 			}
 		}

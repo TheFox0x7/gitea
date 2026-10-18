@@ -310,11 +310,6 @@
 					<dd>{{svg (Iif $.LogSQL "octicon-check" "octicon-x")}}</dd>
 				{{end}}
 
-				{{if .Loggers.access.IsEnabled}}
-					<dt>{{ctx.Locale.Tr "admin.config.access_log_template"}}</dt>
-					<dd>{{$.AccessLogTemplate}}</dd>
-				{{end}}
-
 				{{range $loggerName, $loggerDetail := .Loggers}}
 					<dt>{{ctx.Locale.Tr "admin.config.logger_name_fmt" $loggerName}}</dt>
 					{{if $loggerDetail.IsEnabled}}

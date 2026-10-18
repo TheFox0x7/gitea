@@ -24,13 +24,10 @@ type LogGlobalConfig struct {
 
 	EnableSSHLog bool
 
-	AccessLogTemplate string
-	RequestIDHeaders  []string
+	RequestIDHeaders []string
 }
 
 var Log LogGlobalConfig
-
-const accessLogTemplateDefault = `{{.Ctx.RemoteHost}} - {{.Identity}} {{.Start.Format "[02/Jan/2006:15:04:05 -0700]" }} "{{.Ctx.Req.Method}} {{.Ctx.Req.URL.RequestURI}} {{.Ctx.Req.Proto}}" {{.ResponseWriter.Status}} {{.ResponseWriter.Size}} "{{.Ctx.Req.Referer}}" "{{.Ctx.Req.UserAgent}}"`
 
 func loadLogGlobalFrom(rootCfg ConfigProvider) {
 	sec := rootCfg.Section("log")
@@ -38,7 +35,6 @@ func loadLogGlobalFrom(rootCfg ConfigProvider) {
 	Log.Level = log.LevelFromString(sec.Key("LEVEL").MustString(log.INFO.String()))
 	Log.StacktraceLogLevel = log.LevelFromString(sec.Key("STACKTRACE_LEVEL").MustString(log.NONE.String()))
 	Log.Mode = sec.Key("MODE").MustString("console")
-
 	Log.RootPath = sec.Key("ROOT_PATH").MustString(filepath.Join(AppWorkPath, "log"))
 	if !filepath.IsAbs(Log.RootPath) {
 		Log.RootPath = filepath.Join(AppWorkPath, Log.RootPath)
@@ -47,7 +43,6 @@ func loadLogGlobalFrom(rootCfg ConfigProvider) {
 
 	Log.EnableSSHLog = sec.HasKey("ENABLE_SSH_LOG") && sec.Key("ENABLE_SSH_LOG").MustBool(false)
 
-	Log.AccessLogTemplate = sec.Key("ACCESS_LOG_TEMPLATE").MustString(accessLogTemplateDefault)
 	Log.RequestIDHeaders = sec.Key("REQUEST_ID_HEADERS").Strings(",")
 }
 
@@ -130,12 +125,14 @@ func loadLogModeByName(rootCfg ConfigProvider, loggerName, modeName string) slog
 	writerName := modeName
 	defaultFlags := "stdflags"
 	defaultFileName := "gitea.log"
+	defaultFormat := slog.FormatLegacy
 	if loggerName == "access" {
 		// "access" logger is special, by default it doesn't have output flags, so it also needs a new writer name to avoid conflicting with other writers.
 		// so "access" logger's writer name is usually "file.access" or "console.access"
 		writerName += ".access"
 		defaultFlags = "none"
 		defaultFileName = "access.log"
+		defaultFormat = slog.FormatCLF // access records carry structured request fields; the sink renders the combined log format
 	}
 
 	sink := slog.SinkConfig{
@@ -145,7 +142,7 @@ func loadLogModeByName(rootCfg ConfigProvider, loggerName, modeName string) slog
 		StacktraceLevel: log.LevelFromString(ConfigInheritedKeyString(sec, "STACKTRACE_LEVEL", Log.StacktraceLogLevel.String())),
 		Prefix:          ConfigInheritedKeyString(sec, "PREFIX"),
 		Flags:           slog.FlagsFromString(ConfigInheritedKeyString(sec, "FLAGS", defaultFlags)),
-		Format:          slog.Format(ConfigInheritedKeyString(sec, "FORMAT", string(slog.FormatLegacy))),
+		Format:          slog.Format(ConfigInheritedKeyString(sec, "FORMAT", string(defaultFormat))),
 	}
 
 	switch writerType {

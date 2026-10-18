@@ -174,7 +174,7 @@ ACCESS = file
 	"file.access": {
 		"colorize": false,
 		"flags": "none",
-		"format": "legacy",
+		"format": "clf",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
@@ -250,7 +250,7 @@ STDERR = true
 	"console.access": {
 		"colorize": false,
 		"flags": "none",
-		"format": "legacy",
+		"format": "clf",
 		"level": "warn",
 		"prefix": "",
 		"stacktraceLevel": "none",

@@ -4,29 +4,19 @@
 package context
 
 import (
-	"fmt"
+	"bytes"
+	stdslog "log/slog"
 	"net/http"
 	"net/url"
 	"testing"
 	"time"
 
-	"gitea.dev/modules/log"
+	"gitea.dev/modules/json"
 	"gitea.dev/modules/setting"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-type testAccessLoggerMock struct {
-	logs []string
-}
-
-func (t *testAccessLoggerMock) Log(skip int, event *log.Event, format string, v ...any) {
-	t.logs = append(t.logs, fmt.Sprintf(format, v...))
-}
-
-func (t *testAccessLoggerMock) GetLevel() log.Level {
-	return log.INFO
-}
 
 type testAccessLoggerResponseWriterMock struct{}
 
@@ -52,11 +42,21 @@ func (t testAccessLoggerResponseWriterMock) WrittenSize() int {
 	return 123123
 }
 
-func TestAccessLogger(t *testing.T) {
-	setting.Log.AccessLogTemplate = `{{.Ctx.RemoteHost}} - {{.Identity}} {{.Start.Format "[02/Jan/2006:15:04:05 -0700]" }} "{{.Ctx.Req.Method}} {{.Ctx.Req.URL.RequestURI}} {{.Ctx.Req.Proto}}" {{.ResponseWriter.Status}} {{.ResponseWriter.Size}} "{{.Ctx.Req.Referer}}" "{{.Ctx.Req.UserAgent}}"`
-	recorder := newAccessLogRecorder()
-	mockLogger := &testAccessLoggerMock{}
-	recorder.logger = mockLogger
+type failingResponseWriterMock struct {
+	testAccessLoggerResponseWriterMock
+}
+
+func (t failingResponseWriterMock) WrittenStatus() int {
+	return http.StatusInternalServerError
+}
+
+func newTestAccessRecorder(t *testing.T) (*accessLogRecorder, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	recorder := &accessLogRecorder{logger: stdslog.New(stdslog.NewJSONHandler(buf, nil))}
+	return recorder, buf
+}
+
+func testAccessRequest() *http.Request {
 	req := &http.Request{
 		RemoteAddr: "remote-addr",
 		Method:     http.MethodGet,
@@ -66,11 +66,55 @@ func TestAccessLogger(t *testing.T) {
 	req.Header = http.Header{}
 	req.Header.Add("Referer", "referer")
 	req.Header.Add("User-Agent", "user-agent")
-	recorder.record(time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC), &testAccessLoggerResponseWriterMock{}, req)
-	assert.Equal(t, []string{`remote-addr - - [02/Jan/2000:03:04:05 +0000] "GET /path https" 200 123123 "referer" "user-agent"`}, mockLogger.logs)
+	return req
+}
+
+func decodeAccessRecord(t *testing.T, buf *bytes.Buffer) map[string]any {
+	t.Helper()
+	var rec map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &rec))
+	return rec
+}
+
+func TestAccessLogger(t *testing.T) {
+	recorder, buf := newTestAccessRecorder(t)
+	recorder.record(time.Now(), &testAccessLoggerResponseWriterMock{}, testAccessRequest())
+
+	rec := decodeAccessRecord(t, buf)
+	assert.Equal(t, "GET /path", rec["msg"])
+	assert.Equal(t, "GET", rec["method"])
+	assert.Equal(t, "/path", rec["path"])
+	assert.Equal(t, "https", rec["proto"])
+	assert.InDelta(t, float64(http.StatusOK), rec["status"], 0)
+	assert.InDelta(t, float64(123123), rec["size"], 0)
+	assert.Equal(t, "-", rec["identity"])
+	assert.Equal(t, "referer", rec["referer"])
+	assert.Equal(t, "user-agent", rec["user_agent"])
+	assert.NotEmpty(t, rec["remote_host"])
+	assert.Contains(t, rec, "duration_ms")
+	assert.NotContains(t, rec, "request_id")
 }
 
 func TestAccessLoggerRequestID(t *testing.T) {
+	oldHeaders := setting.Log.RequestIDHeaders
+	setting.Log.RequestIDHeaders = []string{"X-Request-Id"}
+	t.Cleanup(func() { setting.Log.RequestIDHeaders = oldHeaders })
+
+	recorder, buf := newTestAccessRecorder(t)
+	recorder.needRequestID = true
+	req := testAccessRequest()
+	req.Header.Set("X-Request-Id", "req-123")
+	recorder.record(time.Now(), &testAccessLoggerResponseWriterMock{}, req)
+	assert.Equal(t, "req-123", decodeAccessRecord(t, buf)["request_id"])
+
 	assert.False(t, isSafeRequestID("\x00"))
 	assert.True(t, isSafeRequestID("a b-c"))
+}
+
+func TestAccessLoggerServerErrorLevel(t *testing.T) {
+	recorder, buf := newTestAccessRecorder(t)
+	recorder.record(time.Now(), &failingResponseWriterMock{}, testAccessRequest())
+	rec := decodeAccessRecord(t, buf)
+	assert.Equal(t, "ERROR", rec["level"])
+	assert.InDelta(t, float64(http.StatusInternalServerError), rec["status"], 0)
 }

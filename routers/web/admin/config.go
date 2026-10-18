@@ -95,7 +95,6 @@ func Config(ctx *context.Context) {
 	ctx.Data["SessionConfig"] = sessionCfg
 
 	ctx.Data["Git"] = setting.Git
-	ctx.Data["AccessLogTemplate"] = setting.Log.AccessLogTemplate
 	ctx.Data["LogSQL"] = setting.Database.LogSQL
 
 	ctx.Data["Loggers"] = log.GetManager().DumpLoggers()

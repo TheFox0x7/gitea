@@ -20,6 +20,7 @@ const (
 	FormatLegacy Format = "legacy" // Gitea's historical text format
 	FormatLogfmt Format = "logfmt" // slog.TextHandler
 	FormatJSON   Format = "json"   // slog.JSONHandler
+	FormatCLF    Format = "clf"    // Apache combined log format from structured request fields
 )
 
 // maxFailedLineDump bounds the stderr dump of a failed line, so a full stderr
@@ -63,7 +64,7 @@ func newSinkState(cfg SinkConfig) (*sinkState, error) {
 	if format == "" {
 		format = FormatLegacy
 	}
-	if format != FormatLegacy && format != FormatLogfmt && format != FormatJSON {
+	if format != FormatLegacy && format != FormatLogfmt && format != FormatJSON && format != FormatCLF {
 		return nil, fmt.Errorf("invalid format %q for log sink %q", format, cfg.Name)
 	}
 	stacktraceLevel := cfg.StacktraceLevel
@@ -88,6 +89,9 @@ func newSinkState(cfg SinkConfig) (*sinkState, error) {
 func (st *sinkState) needsSource() bool {
 	if st.format == FormatLegacy {
 		return st.flags.Bits()&(Llongfile|Lshortfile|Lfuncname|Lshortfuncname) != 0
+	}
+	if st.format == FormatCLF {
+		return false // CLF lines carry no source
 	}
 	return st.addSource
 }
@@ -161,10 +165,14 @@ func (f *sinkFrontend) enabled(level Level) bool {
 func (f *sinkFrontend) handle(r slog.Record, hi *hiddenInfo) {
 	var err error
 	var line []byte
-	if f.st.format == FormatLegacy {
+	switch f.st.format {
+	case FormatLegacy:
 		line = f.st.formatLegacy(&r, f, hi)
 		_, err = f.writer.Write(line)
-	} else {
+	case FormatCLF:
+		line = f.st.formatCLF(&r)
+		_, err = f.writer.Write(line)
+	default:
 		err = f.inner.Handle(context.Background(), r)
 	}
 	if err != nil {

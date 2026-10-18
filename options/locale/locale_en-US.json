@@ -3421,7 +3421,6 @@
   "admin.config.logger_name_fmt": "Logger: %s",
   "admin.config.disabled_logger": "Disabled",
   "admin.config.access_log_mode": "Access Log Mode",
-  "admin.config.access_log_template": "Access Log Template",
   "admin.config.xorm_log_sql": "Log SQL",
   "admin.config.set_setting_failed": "Set setting %s failed",
   "admin.monitor.stats": "Stats",
