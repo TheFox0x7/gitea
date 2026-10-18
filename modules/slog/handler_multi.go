@@ -28,12 +28,13 @@ type child interface {
 type multiHandler struct {
 	children []child
 
-	needsSource     bool
-	wantsRawArgs    bool
-	needsMessage    bool  // some sink renders Record.Message (not colorized legacy)
-	stacktraceLevel Level // minimum legacy StacktraceLevel; LevelNone if none
-	level           Level // lowest sink level, for GetLevel; LevelNone if no sinks
-	buffering       bool  // some child is a bootstrap bufferChild
+	needsSource          bool
+	wantsRawArgs         bool
+	needsMessage         bool  // some sink renders Record.Message (not colorized legacy)
+	stacktraceLevel      Level // minimum StacktraceLevel over all sinks; LevelNone if none
+	structuredStackLevel Level // minimum StacktraceLevel over json/logfmt sinks, for the Slog() path
+	level                Level // lowest sink level, for GetLevel; LevelNone if no sinks
+	buffering            bool  // some child is a bootstrap bufferChild
 }
 
 var _ slog.Handler = (*multiHandler)(nil)
@@ -48,9 +49,10 @@ func newMultiHandler(frontends []*sinkFrontend) *multiHandler {
 
 func newMultiHandlerChildren(children []child) *multiHandler {
 	h := &multiHandler{
-		children:        slices.Clone(children),
-		stacktraceLevel: LevelNone,
-		level:           LevelNone,
+		children:             slices.Clone(children),
+		stacktraceLevel:      LevelNone,
+		structuredStackLevel: LevelNone,
+		level:                LevelNone,
 	}
 	for _, c := range h.children {
 		if _, ok := c.(bufferChild); ok {
@@ -78,8 +80,11 @@ func newMultiHandlerChildren(children []child) *multiHandler {
 			} else {
 				h.needsMessage = true
 			}
-			if st.format == FormatLegacy && st.stacktraceLevel < h.stacktraceLevel {
+			if st.stacktraceLevel < h.stacktraceLevel {
 				h.stacktraceLevel = st.stacktraceLevel
+			}
+			if (st.format == FormatJSON || st.format == FormatLogfmt) && st.stacktraceLevel < h.structuredStackLevel {
+				h.structuredStackLevel = st.stacktraceLevel
 			}
 			if st.level.Level() < h.level {
 				h.level = st.level.Level()

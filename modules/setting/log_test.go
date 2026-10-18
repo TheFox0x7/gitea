@@ -62,6 +62,7 @@ func TestLogConfigDefault(t *testing.T) {
 {
 	"console": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
@@ -93,6 +94,7 @@ logger.ssh.MODE =
 {
 	"console": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
@@ -122,6 +124,7 @@ MODE = console
 {
 	"console": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
@@ -159,6 +162,7 @@ ACCESS = file
 {
 	"file": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
@@ -173,6 +177,7 @@ ACCESS = file
 {
 	"file.access": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "none",
 		"format": "clf",
 		"level": "info",
@@ -225,6 +230,7 @@ STDERR = true
 {
 	"console": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "warn",
@@ -235,6 +241,7 @@ STDERR = true
 	},
 	"console-1": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "logfmt",
 		"level": "error",
@@ -249,6 +256,7 @@ STDERR = true
 {
 	"console.access": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "none",
 		"format": "clf",
 		"level": "warn",
@@ -263,6 +271,7 @@ STDERR = true
 	// ssh follows the default logger (console @ warn), not xorm's sinks
 	require.JSONEq(t, `{"console": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "warn",
@@ -303,6 +312,7 @@ COMPRESSION_LEVEL = 4
 {
 	"file": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
@@ -313,6 +323,7 @@ COMPRESSION_LEVEL = 4
 	},
 	"file1": {
 		"colorize": false,
+		"addSource": false,
 		"flags": "medfile",
 		"format": "legacy",
 		"level": "error",
@@ -324,4 +335,20 @@ COMPRESSION_LEVEL = 4
 }
 `, "file:"+filepath.Join(tempDir, "gitea.log"), "file:"+filepath.Join(tempDir, "file-xxx.log"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
+}
+
+func TestLogConfigCallerStacktrace(t *testing.T) {
+	manager, managerClose := initLoggersByConfig(t, `
+[log]
+logger.xorm.MODE = console
+
+[log.console]
+WITH_CALLER = true
+STACKTRACE_LEVEL = error
+`)
+	defer managerClose()
+
+	check := loggerDumpJSON(t, manager, "xorm")
+	assert.Contains(t, check, `"addSource": true`)
+	assert.Contains(t, check, `"stacktraceLevel": "error"`)
 }

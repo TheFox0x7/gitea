@@ -34,6 +34,7 @@ SINKS = console,main-file
 
 [log.access]
 SINKS = access-file     ; sharing = referencing the same section, visible
+                        ; the access record is structured; the sink renders it
 
 [log.router]
 SINKS = console
@@ -43,16 +44,18 @@ SINKS = main-file
 
 [log.console]
 TYPE = console
-FORMAT = legacy         ; legacy | logfmt | json
+FORMAT = legacy         ; legacy | logfmt | json | clf | auto
 LEVEL = Info
 STREAM = stdout         ; stdout | stderr (replaces STDERR bool)
 FLAGS = medfile,shortfuncname,level
 COLORIZE = auto         ; auto | true | false
-; PREFIX, STACKTRACE_LEVEL as today
+; PREFIX, STACKTRACE_LEVEL as today (STACKTRACE_LEVEL now applies to
+; structured formats too: json/logfmt get a "stacktrace" field)
+; WITH_CALLER = false       ; new: emit the caller source in structured formats
 
 [log.access-file]
 TYPE = file
-FORMAT = legacy
+FORMAT = clf            ; Apache combined log format from the request fields
 FLAGS = none            ; access defaults become visible config, not code
 FILE_NAME = access.log
 
@@ -61,7 +64,6 @@ TYPE = file
 FORMAT = json
 LEVEL = Debug
 FILE_NAME = gitea.log
-BUFFER_LEN = 10000      ; per sink; global BUFFER_LEN dropped
 ; LOG_ROTATE, MAX_SIZE_SHIFT, DAILY_ROTATE, MAX_DAYS,
 ; COMPRESS, COMPRESSION_LEVEL as today
 
@@ -79,33 +81,37 @@ ADDR = logs.example.com:7020
 | `logger.<name>.MODE = ","` | section absent → `[log] SINKS` | sentinel removed; `[log] MODE` → `[log] SINKS` |
 | `logger.<name>.MODE = ""` | `logger.<name>.SINKS =` (empty) | "disabled" becomes explicit |
 | `[log.<mode>] MODE = <type>` | `[log.<name>] TYPE = <type>` | required; no implicit type-from-section-name |
-| `[log.<mode>] STDERR = true` | `STREAM = stderr` | replaces the bool; `stdout` default |
-| — | `FORMAT = legacy\|logfmt\|json` | new; `legacy` default (byte-compat) |
-| `[log] BUFFER_LEN` | `[log.<name>] BUFFER_LEN` | moved per sink; global key removed |
+| `[log.<mode>] STDERR = true` | `STREAM = stderr` | replaces the bool; default **open: stderr vs stdout, see §5.11** |
+| — | `FORMAT = legacy\|logfmt\|json\|clf\|auto` | new; `clf` = Apache combined log format rendered from the structured access record (default for the access logger); `auto` = Caddy-style destination+terminal detection, see §5.12 |
+| `[log] BUFFER_LEN` | removed | the engine writes synchronously (no queue to size); key accepted and ignored until the breaking release |
 | `COLORIZE` bool (default = runtime color detection) | `COLORIZE = auto\|true\|false` | `auto` = current `CanColorStdout/Stderr` behavior, now visible |
 | `ACCESS`, `ENABLE_ACCESS_LOG`, `ROUTER`, `DISABLE_ROUTER_LOG`, `XORM`, `ENABLE_XORM_LOG` | removed | hard error with rename hint instead of silent rewrite |
+| `RECONNECT`, `RECONNECT_ON_MSG` | removed | reconnection is always automatic and rate-limited (connWriter port of Caddy's redialerConn); the flags were subsumed |
 | `[log.<mode>] EXPRESSION` | removed | filter dropped with the old framework |
+| `ACCESS_LOG_TEMPLATE` | removed | the access logger emits structured fields; the sink's `FORMAT` decides the shape (`clf` by default). The old default template was CLF combined, so default output is preserved (modulo `size == 0` now rendering `-` per spec) |
 
 ## 5. Rationale per change
 
 1. **`SINKS` rename + explicit empty value** — removes both sentinels and ends the config-mutation normalization in `prepareLoggerConfig`.
 2. **`TYPE` required per sink** — one meaning per key; also the natural place for future sink types once the P0 #1 extension point exists (a custom/test sink would be `TYPE = ...` registered by the embedding test binary).
 3. **Access references its own sink section** — deletes the `.access` rename, the code-buried `flags=none`/`access.log` defaults, and structurally prevents the `console-stderr`-style collisions (P1 #4) for config-driven sinks. Defaults move into the shipped/generated default config.
-4. **`FORMAT` per sink** — the capability this whole port exists for; `legacy` default preserves output byte-compatibility.
-5. **`BUFFER_LEN` per sink** — matches `SinkConfig.BufferLen`; a queue depth is a property of a sink's goroutine, not of the process.
+4. **`FORMAT` per sink** — the capability this whole port exists for; `legacy` default preserves output byte-compatibility. `clf` demonstrates the end state: the access logger emits one structured record, and the sink renders it as the combined log format (or JSON, or anything later) without a template.
+5. **`BUFFER_LEN` removed** — the engine writes synchronously (Caddy's model, see `slog_new_design.md` §6); a queue depth is not a property of a synchronous sink. The key is accepted and ignored until the breaking release drops it.
 6. **`STREAM` + tri-state `COLORIZE`** — replaces the `STDERR` bool and surfaces what `CanColorStdout`/`CanColorStderr` currently decide invisibly at runtime.
 7. **Hard-fail on removed keys** — the config provider can validate at load; old keys produce a startup error naming the replacement, which is strictly better than the current silent rewrite.
 8. **Fail fast on invalid sink config** — `Apply` already validates everything before mutating; the port must surface that error at startup instead of `FallbackErrorf` + `continue`.
 9. **Drop `RestartLogsWithPIDSuffix` / `filenameSuffix`** — its own FIXME says it breaks log rotation and collectors; with a breaking release it can simply go.
 10. **`EXPRESSION` stays dead** — dropped by design. If message filtering is ever needed, a per-sink `FILTER` regex slots into this shape without further breaking changes.
+11. **Default destination: stderr (open decision).** Caddy reserves stdout for data and logs to stderr, always; Gitea's console default is stdout (`STDERR = false`). With a breaking release, `STREAM = stderr` as the default matches the Unix convention (stdout stays parseable/pipable, logs never corrupt protocol pipes). Migration note for every `console` sink whose output consumers assumed stdout.
+12. **`FORMAT = auto` (open decision).** Caddy's `newDefaultProductionLogEncoder`: interactive terminal → human format with colors; otherwise → structured JSON. An `auto` value would map to colorized legacy on a tty, `json` otherwise — machine-parseable by default in production, human-readable in development, no config needed for either. Explicit values keep today's behavior.
 
 ## 6. Deliberately unchanged
 
 - `LEVEL` semantics: per-sink filter, effective logger level = "any sink accepts" (OR). The old model never had a logger-level key either — it was derived as min-of-writers. A future `logger.<name>.LEVEL` gate can be added without breaking anything (it only narrows).
-- `STACKTRACE_LEVEL` (legacy format only), `PREFIX`, `FLAGS`, and all file/conn option keys — same names, same meanings, moved nowhere.
+- `STACKTRACE_LEVEL` (now for every format: legacy renders the historical block, json/logfmt get a zap-style `stacktrace` string field), `PREFIX`, `FLAGS`, and all file/conn option keys — same names, same meanings, moved nowhere. `WITH_CALLER` is the new opt-in for structured-format caller attribution.
 - `ROOT_PATH` relative-name resolution for `FILE_NAME`.
-- `ACCESS_LOG_TEMPLATE`, `REQUEST_ID_HEADERS`, `ENABLE_SSH_LOG` — not sink configuration.
-- Default shipped config behavior: `console` sink, legacy format, `Info` — identical output to today.
+- `REQUEST_ID_HEADERS`, `ENABLE_SSH_LOG` — not sink configuration. `ACCESS_LOG_TEMPLATE` is gone: the access record is structured, `FORMAT = clf` (the access default) renders it, and `REQUEST_ID_HEADERS` feeds the `request_id` field.
+- Default shipped config behavior: `console` sink, `Info` — output identical to today, modulo the open decisions in §5.11 (default stream) and §5.12 (`FORMAT = auto`).
 
 ## 7. Migration
 

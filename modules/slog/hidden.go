@@ -16,9 +16,9 @@ type hiddenInfo struct {
 	file   string // prefilled file name
 	line   int    // prefilled line number
 
-	format     string // printf format, for colorized legacy re-rendering
-	args       []any  // printf args, for colorized legacy re-rendering
-	stacktrace string // pre-computed stack trace
+	format string    // printf format, for colorized legacy re-rendering
+	args   []any     // printf args, for colorized legacy re-rendering
+	stack  []uintptr // captured once when the tree needs stacks; rendered per sink
 }
 
 // prefillSource resolves the record's caller once so all legacy sinks share it

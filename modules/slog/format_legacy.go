@@ -173,8 +173,8 @@ func (st *sinkState) formatLegacy(rec *slog.Record, fe *sinkFrontend, hi *hidden
 
 	buf = fe.appendLegacyAttrs(buf, rec)
 
-	if hi != nil && hi.stacktrace != "" && st.stacktraceLevel <= rec.Level {
-		for line := range strings.SplitSeq(hi.stacktrace, "\n") {
+	if hi != nil && len(hi.stack) > 0 && st.stacktraceLevel <= rec.Level {
+		for line := range strings.SplitSeq(formatLegacyStack(hi.stack), "\n") {
 			buf = append(buf, "\n\t"...)
 			buf = append(buf, line...)
 		}

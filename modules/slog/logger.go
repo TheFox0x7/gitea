@@ -42,16 +42,26 @@ func (l *Logger) Slog() *slog.Logger {
 	if sl := l.slogger.Load(); sl != nil {
 		return sl
 	}
-	sl := slog.New(l.handler.Load()).With(slog.String("logger", l.name))
+	sl := newSlogLogger(l.handler.Load(), l.name)
 	// only fill an empty slot: swapHandler always stores a fresh pair, so a
 	// winning CAS here can never cache a stale handler
 	l.slogger.CompareAndSwap(nil, sl)
 	return l.slogger.Load()
 }
 
+// newSlogLogger wraps the tree with the stack injector when a structured sink
+// configured a stacktrace level (the stdlib has no stack mechanism).
+func newSlogLogger(h *multiHandler, name string) *slog.Logger {
+	var handler slog.Handler = h
+	if h.structuredStackLevel != LevelNone {
+		handler = &stackHandler{inner: h, level: h.structuredStackLevel}
+	}
+	return slog.New(handler).With(slog.String("logger", name))
+}
+
 func (l *Logger) swapHandler(h *multiHandler) {
 	l.handler.Store(h)
-	l.slogger.Store(slog.New(h).With(slog.String("logger", l.name)))
+	l.slogger.Store(newSlogLogger(h, l.name))
 }
 
 func (l *Logger) GetLevel() Level {
@@ -238,7 +248,7 @@ func (l *Logger) logPrintf(pc uintptr, level Level, format string, args []any, p
 		if hi == nil {
 			hi = &hiddenInfo{}
 		}
-		hi.stacktrace = Stack(stackSkip + 1)
+		hi.stack = captureStack(stackSkip + 1)
 	}
 	if h.needsSource && (hi == nil || hi.caller == "") {
 		if hi == nil {

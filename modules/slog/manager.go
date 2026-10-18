@@ -202,6 +202,7 @@ func (m *Manager) Dump() map[string]any {
 			"colorize":        st.colorize,
 			"prefix":          st.prefix,
 			"flags":           st.flags.String(),
+			"addSource":       st.addSource,
 		}
 		if st.writerKey != "" {
 			entry["writer"] = st.writerKey // shared when another sink targets the same key

@@ -19,9 +19,10 @@ flowchart TB
     subgraph mgr["Manager (defaultManager)"]
         REG["loggers map[name]*Logger"]
         SINKREG["sinks owned by logger trees<br/>dedup by SinkConfig.Name within one Apply"]
-        PAUSE["pauseChan — PauseAll/ResumeAll"]
-        APPLY["Apply(Config)<br/>1. validate everything<br/>2. build all sinks fresh<br/>3. swap trees, stop orphaned backends"]
-        CLOSE["Close — stop all backends, forget maps"]
+        PAUSE["pauseGate — PauseAll/ResumeAll<br/>(stalls writes while paused)"]
+        POOL["writerPool — usage-counted<br/>writers keyed by target identity"]
+        APPLY["Apply(Config)<br/>1. validate everything<br/>2. build all sinks fresh<br/>3. swap trees, release orphaned writers<br/>4. flush bootstrap buffer"]
+        CLOSE["Close — release all writers, forget maps"]
     end
 
     subgraph tree["per-logger handler tree (atomic.Pointer, swapped on reconfigure)"]
@@ -29,22 +30,17 @@ flowchart TB
     end
 
     subgraph fe["sinkFrontend — one per sink per tree, slog.Handler"]
-        F1["legacy: formatLegacy() now<br/>on the caller goroutine → queue bytes"]
-        F2["json / logfmt: strip hidden attrs,<br/>Clone() → queue record (format deferred)"]
+        F1["legacy: formatLegacy() on the<br/>caller goroutine → gated write"]
+        F2["json / logfmt: render inline via<br/>std handler → gated write<br/>failure → stderr dump of the line"]
     end
 
     subgraph st["sinkState — shared config, one per sink"]
-        STATE["format, flags, colorize, prefix,<br/>stacktraceLevel, addSource, bufferLen<br/>level = *slog.LevelVar (atomic)"]
-    end
-
-    subgraph be["sinkBackend — one per sink"]
-        Q["chan sinkItem (BufferLen, default 1000)<br/>enqueue non-blocking, overflow → drop + stderr"]
-        G["1 goroutine: pop → waitPaused → write<br/>stop: close(done) → drain ≤ 5s → writer.Close<br/>stop-wait ≤ 2s, queue never closed"]
+        STATE["format, flags, colorize, prefix,<br/>stacktraceLevel, addSource<br/>level = *slog.LevelVar (atomic)"]
     end
 
     W1["console: os.Stdout / os.Stderr"]
     W2["file: rotatingfilewriter<br/>(rotation inline under its mutex)"]
-    W3["conn: TCP/UDP/unix<br/>dial 30s / write 60s deadlines, keepalive"]
+    W3["conn: TCP/UDP/unix, write deadline,<br/>redial ≤ 1/10s, stderr dump while down"]
 
     PKG --> GETL
     APPLY --> REG
@@ -52,21 +48,22 @@ flowchart TB
     REG --> tree
     SINKREG --> st
     tree --> fe
-    st --> be
-    fe -->|"bytes (legacy)"| G
-    fe -->|"record (json/logfmt)"| G
-    G --> W1
-    G --> W2
-    G --> W3
-    PAUSE -.->|"getPauseChan per item"| G
+    st --> POOL
+    fe -->|"render + write inline"| W1
+    fe --> W2
+    fe --> W3
+    PAUSE -.->|"gates every write"| fe
 ```
 
 Ownership rules that make sharing safe:
 
-- **frontend : backend is N : 1.** Each logger tree holds its own `sinkFrontend`
-  clones (slog's `WithAttrs`/`WithGroup` must return new handlers); the queue,
-  goroutine and io.Writer live in the refcount-by-registry `sinkBackend` and are
-  created once per sink within an `Apply` call.
+- **frontend : state is N : 1.** Each logger tree holds its own `sinkFrontend`
+  clones (slog's `WithAttrs`/`WithGroup` must return new handlers); the config,
+  level and writer live in the shared `sinkState`, created once per sink within
+  an `Apply` call. Writes are synchronous on the caller goroutine — the Caddy
+  model, chosen after measurement showed the async queue bought only ~20%
+  caller time on a path dominated by formatting (see §6) — so there are no
+  queues, no drops and no drain timeouts.
 - **State is read-only after creation.** `sinkState` fields never change; the
   only mutable knob is the `slog.LevelVar`. Reconfiguration builds new objects
   and swaps one pointer (`Logger.swapHandler`), it never mutates a running tree.
@@ -75,18 +72,124 @@ Ownership rules that make sharing safe:
   (min over legacy sinks) and `level` (min overall) are aggregated once when
   `newMultiHandler` builds the tree, so the hot path reads plain bools/ints.
 
+### 1.3 Writer registry
+
+Ported from Caddy's `WriterOpener`/`UsagePool` pair (writer.go). A sink never
+opens an output itself; it describes one:
+
+```go
+type WriterOpener interface {
+	fmt.Stringer
+	WriterKey() string                    // target identity: "file:/path", "net:tcp//host:port", "std:out", "registered:<type>"
+	OpenWriter() (io.WriteCloser, error)
+}
+```
+
+`Manager.writers` is a usage-counted pool keyed by `WriterKey`:
+
+- **Same target ⇒ one writer.** Two sinks with the same `FILE_NAME` (any sink
+  names, any formats/levels — those are per-sink) share one `RotatingFileWriter`,
+  so rotation state can never diverge and there is no second fd appending
+  behind the rotator's back. Same for one TCP connection shared by two sinks.
+- **Refcount by sink.** Each sink acquires on build and releases after its
+  backend has fully stopped (provision orphan sweep and `Manager.Close`); the
+  writer closes when the last reference drops. Re-applying a config with the
+  same target therefore keeps the open file instead of close/reopen.
+- **Settings first-wins, reported.** The pool stores a `%#v` repr of the
+  opener's fields; a second sink with divergent settings (e.g. different roll
+  options on the same file) keeps the existing writer and the divergence is
+  reported to stderr once per writer. Registered sink types are opaque
+  factories, so only their type is comparable (per-type sharing, which also
+  matches testlogger's singleton writer).
+- **Injected writers bypass the pool.** `Manager.apply`'s test injection wires
+  a writer directly; release closes it (recorders assert this).
+- **`RotatingFileWriter` serialization.** Sharing means two sink goroutines
+  can call `Write` concurrently, so `Write` now holds the writer mutex and
+  `DoRotate` runs through an unlocked `doRotate` — previously `Write` was
+  unlocked and rotation could swap the fd under an in-flight write.
+
+- **`connWriter` failure semantics** (port of Caddy's `redialerConn`): a
+  failed write retries once (a concurrent writer may have reconnected under
+  the lock), redials are rate-limited to one per 10s so a down remote never
+  turns emissions into blocking dials, and every write carries a deadline —
+  unlike Caddy, whose sync engine blocks forever on a stalled reader. On any
+  sink write error the caller dumps the formatted line to stderr (capped at
+  32 KiB) before the error notice, so the event content survives.
+  `RECONNECT`/`RECONNECT_ON_MSG` are accepted config keys but no-ops:
+  reconnection is always automatic.
+
+> Sidenote: Caddy has since replaced lumberjack with timberjack for file
+> rotation, gaining count-based retention (`roll_keep`) alongside days
+> (`roll_keep_for`), at-time rotation (`roll_at` / `roll_minutes` /
+> `roll_interval`) and configurable file modes (`mode`, create + chmod-if-
+> different). Our `rotatingfilewriter` has size + daily + keep-days only —
+> count-based retention and file modes are the interesting gaps, not planned
+> for now.
+
+### 1.4 Bootstrap buffer
+
+Ported from Caddy's `BufferedLog`/`LogBufferCore` (`internal/logbuffer.go`),
+with the flush driven by `Apply` instead of manual error paths. Every new
+logger's tree starts with a `bufferChild`: until an Apply configures the
+logger, its events are captured into a bounded per-manager ring (oldest
+dropped, drop count reported on flush), and `Apply` replays them into the
+newly configured trees — same order, same formats, prefilled source, so
+replayed events are indistinguishable from direct ones. Events of loggers an
+Apply does not configure stay buffered until a later Apply configures them.
+
+- **Capture floor.** `SetBootstrapLevel` gates what is captured; the CLI's
+  `--quiet`/`--debug`/`--verbose` map onto it. This replaced the old
+  provisional stderr logger and its FORMAT-ini peek: replayed events carry the
+  user's real format and destination instead of a guess, and git-protocol
+  sub-commands (`serv`/`keys`/`hook`, FATAL floor) stay silent.
+- **Not a sink.** The buffer never counts as "accepted": a pre-configuration
+  `Fatal` still echoes to stderr, since `Close` discards the buffer.
+- **Spill.** `SpillBufferedEvents` is the CLI's flush-on-exit (the equivalent
+  of Caddy's `FlushTo(defaultLogger)` on error paths): a command that never
+  applies a logging configuration still surfaces its buffered events, on
+  stderr, gated on the default logger never having been configured.
+
+## 6. Evaluation: sync vs async write path (Caddy comparison)
+
+**Decided 2026-10-18: the engine is fully synchronous** (Caddy's model). The
+per-sink queue/goroutine machinery was removed: frontends render and write
+inline, the pause gate stalls writers instead of buffering, overflow-drops no
+longer exist, and `BUFFER_LEN` is dead config. Stalls are bounded: file/console
+writes are effectively never slow, and `connWriter`'s write deadline plus
+rate-limited redial converts a stalled remote into the same error→stderr-dump
+path. The measurements that drove the decision, taken on the async engine
+(before removal; kept for the record):
+
+| benchmark | ns/op (caller) |
+|---|---|
+| `RawFileAppend` (syscall floor, 128 B) | ~1400 |
+| `SyncLegacyFile` (Caddy model: render + write inline) | ~7400 |
+| `SyncLegacyFileParallel` -8 (8-way writer contention) | ~7500 |
+| `AsyncLegacyFile` (old model: eager render + enqueue) | ~5100-7000 |
+| `PrintfLegacyPlain` (async, zero-cost writer) | ~3200 |
+
+The eager legacy render (~3µs) dominated both models; the goroutine only
+offloaded the ~1.4µs syscall (~20% caller time), and 8-way writer contention
+added ~5% in the sync model. After the switch, the shipped engine measures
+~2.1µs (legacy console) / ~3.1µs (legacy file) end-to-end — on par or faster
+than the async engine, with no drops, no drain timeouts, no per-sink
+goroutines and no queue memory.
+
+
+
+
 ### 1.2 Component mapping from `modules/log`
 
 | modules/log | modules/slog | Notes |
 |---|---|---|
 | `LoggerImpl` + `LoggerManager` | `Logger` + `Manager` | Tree swap replaces writer add/remove; no more `syncLevelInternal` recompute |
 | `EventWriterBaseImpl` (queue+goroutine) | `sinkBackend` | Same contract: bounded chan, drop-on-overflow, 1 goroutine, never-closed queue |
-| `EventWriter` console/file/conn | `newSinkWriter` cases | conn gains dial/write deadlines + keepalive; file unchanged; console = nop WriteCloser |
+| `EventWriter` console/file/conn | `WriterOpener` openers (writer.go) | conn gains dial/write deadlines + keepalive; file unchanged; console = nop WriteCloser |
 | `EventFormatTextMessage` | `formatLegacy` | Port; consumes `Record` fields + hidden attrs; adds `key=value` attr suffix |
 | `Event` struct (caller, stacktrace, msgArgs) | hidden attr `\x00gitea.hidden` | Single attr on the record; stripped before stdlib sinks see it |
 | `SendLogEvent` per-writer format | `sinkFrontend.Handle` | Legacy still eager on caller goroutine; json/logfmt deferred (new) |
 | `WriterMode.Level` + `syncLevelInternal` | `slog.LevelVar` + min in `newMultiHandler` | Aggregation is now correct (old assigned the wrong field, see parity notes §4) |
-| `initLoggerByName` + `GetSharedWriter` | `Manager.Apply` first-wins | Config translation stays in `modules/setting` (see §3) |
+| `initLoggerByName` + `GetSharedWriter` | `Manager.Apply` first-wins (sinks), `writerPool` (writers) | Config translation stays in `modules/setting` (see §3); writer dedup moved to target identity, see §1.3 |
 | `misc.go` adapters | §4 below | `LoggerToWriter` ⇒ `slog.NewLogLogger` |
 
 ## 2. Call flow for a single log
@@ -100,37 +203,32 @@ sequenceDiagram
     participant MH as multiHandler
     participant FL as frontend (legacy console)
     participant FS as frontend (json file)
-    participant G1 as backend goroutine (console)
-    participant G2 as backend goroutine (file)
 
     C->>L: Error → logPrintf(skip=1, ERROR, format, args)
     L->>MH: Enabled(ctx, ERROR) — OR of LevelVar atomics
     Note over L: gate fails → return (one atomic scan, no allocs)
-    L->>L: PC = runtime.Callers(skip+2) — only if tree needsSource
-    L->>L: clone args, mask URLs, wrap LogStringer, keep ColoredValue
+    L->>L: resolve args in place (mask URLs, LogStringer, keep ColoredValue)
     L->>L: rec = NewRecord(now, ERROR, Sprintf(format, args), PC)
-    L->>L: add hidden attr = format+args if wantsRawArgs, stacktrace if level ≥ stacktraceLevel
-    L->>MH: Handle(ctx, rec)
-    MH->>FL: Handle — child level re-check passes
-    FL->>FL: formatLegacy on THIS goroutine<br/>(colored re-render needs raw args, Stringers unsafe cross-goroutine)
-    FL-->>G1: enqueue bytes (non-blocking)
-    MH->>FS: Handle — child level re-check
-    FS->>FS: strip hidden attrs → Clone record
-    FS-->>G2: enqueue record (format deferred)
-    G1->>G1: waitPaused → stdout.Write(buf)
-    G2->>G2: waitPaused → JSONHandler.Handle(rec) → file.Write
+    L->>L: hiddenInfo = raw format+args if wantsRawArgs,<br/>stacktrace if level ≥ stacktraceLevel, prefilled source if needsSource
+    L->>MH: handle(rec, hi)
+    MH->>FL: handle — child level re-check passes
+    FL->>FL: formatLegacy on THIS goroutine
+    FL->>FL: gateWriter → pause RLock → stdout.Write(bytes)
+    MH->>FS: handle — child level re-check
+    FS->>FS: gateWriter → JSONHandler.Handle(rec) → file.Write
+    Note over FL,FS: a failed write re-renders the line to stderr (bounded), never dropped
 ```
 
 Numbered walk-through:
 
 1. Package fn adds one skip level: `log.Error` → `Log(1,...)` → `Default().Log(skip+1)` — identical skip arithmetic to old `logger_global.go`.
 2. Level gate: `multiHandler.Enabled` walks children, each a single `LevelVar` atomic compare. Old code did one `atomic.Int32` compare; the new gate is a short loop of atomics (a few ns, see parity notes §4.2).
-3. `PC` capture is conditional — the tree's `needsSource` hint means `flags=none` sinks (access log) skip `runtime.Callers` entirely; old code ran `runtime.Caller` on every event.
+3. `PC` capture is conditional — the tree's `needsSource` hint means `flags=none`/CLF sinks (access log) skip `runtime.Callers` entirely; old code ran `runtime.Caller` on every event.
 4. Arg resolution happens on the caller goroutine: `protectSensitiveInfo` on string args, `LogStringer` → `fmt.Formatter`, `ColoredValue` passed through untouched.
-5. One `slog.Record` is built for all sinks. Hidden attrs (single `\x00gitea.hidden` attr) carry only what some sink in this tree needs: raw printf format+args for colorized legacy re-rendering, precomputed stacktrace.
-6. `multiHandler.Handle` re-checks each child's level, so a `Debug` record costs nothing at a `Warn`-level sink.
-7. Legacy formatting stays on the caller goroutine (byte-compat + `ColoredValue` safety); json/logfmt pay only a strip + `Clone` here, and all reflection/encoding happens on the sink goroutine.
-8. Enqueue is `select { done | queue | default: drop+FallbackErrorf }` — a stalled writer never blocks callers, same as old.
+5. One `slog.Record` is built for all sinks. The `hiddenInfo` side channel carries only what some sink in this tree needs: raw printf format+args for colorized legacy re-rendering, precomputed stacktrace, prefilled source.
+6. `multiHandler.handle` re-checks each child's level, so a `Debug` record costs nothing at a `Warn`-level sink.
+7. All rendering happens on the caller goroutine (the sync model, §6): legacy via `formatLegacy`, CLF via `formatCLF`, json/logfmt via the stdlib handler — no clone, no queue, no sink goroutine.
+8. Writes are pause-gated and synchronous; a failed write re-renders the line to stderr (capped) and reports the error, so an event is never silently dropped.
 
 ### 2.2 structured path — `GetLogger("x").Slog().Info("msg", "k", v)`
 
@@ -145,20 +243,21 @@ sequenceDiagram
     Note over S: stdlib captures PC itself (always)
     S->>MH: Enabled → Handle(record + attrs)
     MH->>F: Handle per enabled sink
-    F->>F: legacy → eager format + key=value attr suffix<br/>json/logfmt → Clone → deferred
+    F->>F: legacy → formatLegacy + key=value suffix<br/>clf → formatCLF from the record's request fields<br/>json/logfmt → stdlib handler<br/>all inline, all gated by the pauseGate
 ```
 
 Differences vs the printf path:
 
-- No hidden attrs are ever attached: no masking, no `LogStringer` resolution, no stacktrace rendering on this path (parity notes §2 item on masking applies here).
+- No hidden info is ever attached: no masking, no `LogStringer` resolution, no stacktrace rendering on this path (parity notes §2 item on masking applies here).
 - PC is captured unconditionally by the stdlib `Logger` (the `needsSource` hint is a printf-path optimization only).
 - `Fatal` on this path is just a level — process exit stays the facade's job (`Logger.Fatal` / package `Fatal`).
+- The access logger emits on this path: one structured record per request (method, path, proto, status, size, duration_ms, identity, referer, user_agent, optional request_id); the sink's `FORMAT` decides the shape, `clf` rendering the Apache combined line.
 
-### 2.3 Failure and shutdown behavior (both paths)
+### 2.3 Failure and write behavior (both paths)
 
-- Queue full → event dropped, one stderr line naming the sink (old JSON-marshaled the event first).
-- `PauseAll` → new `pauseChan`; sink goroutines block on it between items; `ResumeAll` closes it (nil-guarded — old panicked on double resume).
-- `Manager.Close` / backend `stop`: `close(done)` → goroutine drains remaining items with a 5s deadline → `writer.Close()`; the stopper waits ≤ 2s. The queue channel is never closed, so a racing enqueue can at worst drop an event, never panic.
+- Writer error → the line is re-rendered to stderr (capped at 32 KiB) with an error notice naming the sink; the sync engine never queues, so nothing is dropped silently.
+- `PauseAll`/`ResumeAll` → `pauseGate` (RWMutex): Pause holds the write lock, every write acquires the read side, Resume releases. Idempotent, and `Close` releases a held gate.
+- `Manager.Close` → releases all writers (the pool closes each on its last reference); there is nothing to drain because writes are synchronous.
 
 ## 3. Configuration: previous logger port → new one
 
@@ -220,7 +319,7 @@ Differences vs the printf path:
 
 | Adapter (old) | Port | Verdict |
 |---|---|---|
-| `LoggerToWriter(GetLogger(DEFAULT).Info)` — golog bridge (setting/log.go:200, cmd/doctor.go:103,175) | `golog.SetOutput(slog.NewLogLogger(l.Slog().Handler(), slog.LevelInfo))` | **Replaced.** Strictly better: PC now points at the real `golog` caller instead of `loggerToWriter.Write`; output still non-blocking (legacy frontend formats eagerly, stdlib frontends enqueue). Caveats: message keeps golog's trailing `\n` (legacy strips one; json/logfmt will embed it in `msg`); no `protectSensitiveInfo` on this path (old masked via the printf path — negligible: only fires when the entire written line parses as an http URL). Keep `golog.SetFlags(0)`/`SetPrefix("")` as today. |
+| `LoggerToWriter(GetLogger(DEFAULT).Info)` — golog bridge (setting/log.go:200, cmd/doctor.go:103,175) | `golog.SetOutput(bridge)` where bridge is a ~10-line `io.Writer` over `slog.NewLogLogger(l.Slog().Handler(), LevelInfo)` — stdlib `*log.Logger` exposes `Output(calldepth, s)`, not `Write`, so it needs the adapter (implemented in `modules/setting/log_slog.go`). Strictly better: PC now points at the real `golog` caller instead of `loggerToWriter.Write`; output still non-blocking (legacy frontend formats eagerly, stdlib frontends enqueue). Caveats: message keeps golog's trailing `\n` (legacy strips one; json/logfmt will embed it in `msg`); no `protectSensitiveInfo` on this path (old masked via the printf path — negligible: only fires when the entire written line parses as an http URL). Keep `golog.SetFlags(0)`/`SetPrefix("")` as today. |
 | `PrintfLogger` (misc.go:59) | drop | No non-test callers. Wherever an `io.Writer`-ish shim is needed, `NewLogLogger` covers it. |
 | `BaseLoggerToGeneralLogger` + `baseToLogger` (misc.go:15) | mostly delete | `NewLogLogger` doesn't apply (`BaseLogger` is a printf interface, not an `io.Writer`). But the new `*Logger` already *is* the general logger (`Log/GetLevel/LevelEnabled/Trace..Fatal`), so doctor can target it or a ~10-line shim for `Base`-implementors like `doctorCheckLogger`; the `*Event` parameter disappears from the shim signature. |
 | `ErrorWithSkip` (logger_global.go:49) | 2-line package fn on `Default().Log` | Keep; explicit skip plumbing is inherently custom. |
@@ -235,7 +334,7 @@ Verdict: **the core is already DI-ready** — `Manager` is a self-contained inje
 object (all state instance-scoped behind `m.mu`/atomics; every test constructs its own),
 and services can depend on `*slog.Logger` — a stdlib type — via `Logger.Slog()`, making
 `slog.Handler` the port and this module the adapter. The only intra-repo dependency is
-`rotatingfilewriter` (file-sink construction in `config.go`), one-directional.
+`rotatingfilewriter` (file-sink opener in `writer.go`), one-directional.
 
 ### 5.1 Global inventory and disposition
 
@@ -268,3 +367,28 @@ before/despite DI); if purity ever demands it, it becomes a `Manager` field.
    API. The no-globals cleanup lands with the migration plan's final step (deprecated
    surface deletion takes `global.go`/`defaultManager`/`OsExiter` with it), provided P0 #1
    is built per decision 2 and the reverse bridge stays unwired per decision 1.
+
+## 7. Format-layer comparison: findings ledger (Caddy)
+
+Examined 2026-10-18 against Caddy's access-log emitter (`modules/caddyhttp/server.go`,
+`marshalers.go`) and zap's production encoder config. Caddy's shape:
+
+```json
+{"level":"info","ts":1729250000.123,"logger":"http.log.access","msg":"handled request",
+ "request":{"remote_ip":"…","remote_port":"…","proto":"HTTP/2.0","method":"GET","host":"…","uri":"/path","headers":{…}},
+ "bytes_read":0,"user_id":"fox","duration":0.0123,"size":8341,"status":200,"resp_headers":{…}}
+```
+
+| finding | disposition |
+|---|---|
+| **Status → level** (`status >= 500 → ERROR`, else INFO) | **DONE** — the access recorder emits ERROR for 5xx so alerting and error-only sinks can pick them out |
+| **Event messages** (constant `"handled request"`, detail only in fields) | **Long-term strategy, not general.** Human-readable log messages stay as they are; low-cardinality event naming may be revisited as part of the access rewrite only |
+| **Request grouping** (`request{remote_ip, remote_port, proto, method, uri}`) | **Noted for the access rewrite** — slog.Group expresses it; CLF reads the group instead of flat keys, output unchanged |
+| **Field vocabulary** (`user_id`, `uri`, `remote_ip`/`remote_port`) | **Noted for the access rewrite** — the structured access shape is unreleased, so the vocabulary is still free to choose |
+| **Timestamp/duration configurability** (`ts` epoch seconds vs ISO vs custom/local; duration s/ms/ns/string) | **Adoptable** — compile per-sink options into `HandlerOptions.ReplaceAttr`; keep `duration_ms` as the access unit (self-describing) |
+| **Key renaming** (`message_key`, `time_key`, `level_key`, …) | **Adoptable** — same ReplaceAttr mechanism; `@timestamp`/`severity` are what ELK/GCP expect |
+| **Caller / stacktrace for structured formats** (`with_caller`, `with_stacktrace`) | **DONE** — `WITH_CALLER` wires `AddSource`; `STACKTRACE_LEVEL` now captures once per event for every format and json/logfmt emit a zap-style `stacktrace` string field (the `Slog()` path gets it via a stack-injecting handler). Legacy keeps its historical rendering |
+| **Header capture with credential redaction** | **Skipped** — privacy-by-default beats opt-in disclosure for Gitea |
+| **`bytes_read`, TLS state, `host`** | **Skipped** — multi-tenant/security-audit concerns; the reverse proxy owns them |
+| **`WithLazy` deferred encoding** | n/a — the sync engine renders at write time |
+| **Encoder buffer pool** (`buffer.NewPool`) | **Note only** — `formatLegacy`/`formatCLF` allocate per line; `sync.Pool` is a trivial later win if profiles ask |

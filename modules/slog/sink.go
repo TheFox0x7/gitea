@@ -172,7 +172,10 @@ func (f *sinkFrontend) handle(r slog.Record, hi *hiddenInfo) {
 	case FormatCLF:
 		line = f.st.formatCLF(&r)
 		_, err = f.writer.Write(line)
-	default:
+	default: // json / logfmt
+		if hi != nil && len(hi.stack) > 0 && f.st.stacktraceLevel <= r.Level {
+			r.AddAttrs(slog.String("stacktrace", formatStackFrames(hi.stack)))
+		}
 		err = f.inner.Handle(context.Background(), r)
 	}
 	if err != nil {

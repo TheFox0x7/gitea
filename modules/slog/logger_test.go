@@ -78,12 +78,11 @@ func TestLegacyFormatGolden(t *testing.T) {
 		return slog.NewRecord(time.Date(2020, 1, 2, 3, 4, 5, 6, time.UTC), LevelError, "msg format: arg0 arg1", 0)
 	}
 	hi := &hiddenInfo{
-		caller:     "caller",
-		file:       "filename",
-		line:       123,
-		stacktrace: "stacktrace",
-		format:     "msg format: %v %v",
-		args:       []any{"arg0", NewColoredValue("arg1", FgBlue)},
+		caller: "caller",
+		file:   "filename",
+		line:   123,
+		format: "msg format: %v %v",
+		args:   []any{"arg0", NewColoredValue("arg1", FgBlue)},
 	}
 	st := &sinkState{
 		name:            "t",
@@ -94,12 +93,12 @@ func TestLegacyFormatGolden(t *testing.T) {
 	}
 
 	rec := newRecord()
-	assert.Equal(t, `[PREFIX] 2020/01/02 03:04:05.000000 filename:123:caller [E] [no-gopid] msg format: arg0 arg1`+"\n\tstacktrace\n\n",
+	assert.Equal(t, `[PREFIX] 2020/01/02 03:04:05.000000 filename:123:caller [E] [no-gopid] msg format: arg0 arg1`+"\n",
 		string(st.formatLegacy(&rec, &sinkFrontend{st: st}, hi)))
 
 	st.colorize = true
 	rec = newRecord()
-	assert.Equal(t, "[PREFIX] \x1b[36m2020/01/02 03:04:05.000000 \x1b[0m\x1b[32mfilename:123:\x1b[32mcaller\x1b[0m \x1b[1;31m[E]\x1b[0m [\x1b[93mno-gopid\x1b[0m] msg format: arg0 \x1b[34marg1\x1b[0m\n\tstacktrace\n\n",
+	assert.Equal(t, "[PREFIX] \x1b[36m2020/01/02 03:04:05.000000 \x1b[0m\x1b[32mfilename:123:\x1b[32mcaller\x1b[0m \x1b[1;31m[E]\x1b[0m [\x1b[93mno-gopid\x1b[0m] msg format: arg0 \x1b[34marg1\x1b[0m\n",
 		string(st.formatLegacy(&rec, &sinkFrontend{st: st}, hi)))
 }
 
@@ -473,4 +472,49 @@ func TestLevelAndFlagsParsing(t *testing.T) {
 	assert.Equal(t, LstdFlags, Flags{}.Bits())
 	assert.Equal(t, uint32(0), FlagsFromString("none").Bits())
 	assert.Equal(t, Lshortfile|Llongfile, FlagsFromString("medfile,longfile").Bits())
+}
+
+func TestStructuredStacktracePrintf(t *testing.T) {
+	m, l, rec := newTestLogger(t, func(c *SinkConfig) {
+		c.Format = FormatJSON
+		c.StacktraceLevel = LevelError
+	})
+	l.Warn("no stack")
+	l.Error("stack here")
+	m.Close()
+
+	lines := strings.Split(strings.TrimSpace(rec.String()), "\n")
+	require.Len(t, lines, 2)
+	assert.NotContains(t, lines[0], "stacktrace")
+	assert.Contains(t, lines[1], `"stacktrace":`)
+	// zap-style frames: the caller's function name on the first line
+	assert.Contains(t, lines[1], "TestStructuredStacktracePrintf")
+}
+
+func TestStructuredStacktraceSlog(t *testing.T) {
+	m, l, rec := newTestLogger(t, func(c *SinkConfig) {
+		c.Format = FormatJSON
+		c.StacktraceLevel = LevelError
+	})
+	l.Slog().Warn("no stack")
+	l.Slog().Error("stack here")
+	m.Close()
+
+	lines := strings.Split(strings.TrimSpace(rec.String()), "\n")
+	require.Len(t, lines, 2)
+	assert.NotContains(t, lines[0], "stacktrace")
+	assert.Contains(t, lines[1], `"stacktrace":`)
+	assert.Contains(t, lines[1], "TestStructuredStacktraceSlog")
+	assert.NotContains(t, lines[1], "log/slog.log")
+}
+
+func TestAddSource(t *testing.T) {
+	m, l, rec := newTestLogger(t, func(c *SinkConfig) {
+		c.Format = FormatJSON
+		c.AddSource = true
+	})
+	l.Warn("with source")
+	m.Close()
+	assert.Contains(t, rec.String(), `"source":{"function":`)
+	assert.Contains(t, rec.String(), "TestAddSource")
 }

@@ -143,6 +143,7 @@ func loadLogModeByName(rootCfg ConfigProvider, loggerName, modeName string) slog
 		Prefix:          ConfigInheritedKeyString(sec, "PREFIX"),
 		Flags:           slog.FlagsFromString(ConfigInheritedKeyString(sec, "FLAGS", defaultFlags)),
 		Format:          slog.Format(ConfigInheritedKeyString(sec, "FORMAT", string(defaultFormat))),
+		AddSource:       ConfigInheritedKey(sec, "WITH_CALLER").MustBool(false),
 	}
 
 	switch writerType {
