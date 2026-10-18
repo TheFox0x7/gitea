@@ -22,6 +22,9 @@ func builtinUnused() {
 	graceful.GetManager().InformCleanup()
 }
 
+// logger is the named "ssh" component logger, configurable via [logger.ssh].
+var logger = log.GetLogger("ssh")
+
 func Init() error {
 	if setting.SSH.Disabled {
 		builtinUnused()
@@ -30,7 +33,7 @@ func Init() error {
 
 	if setting.SSH.StartBuiltinServer {
 		Listen(setting.SSH.ListenHost, setting.SSH.ListenPort, setting.SSH.ServerCiphers, setting.SSH.ServerKeyExchanges, setting.SSH.ServerMACs)
-		log.Info("SSH server started on %q. Ciphers: %v, key exchange algorithms: %v, MACs: %v",
+		logger.Info("SSH server started on %q. Ciphers: %v, key exchange algorithms: %v, MACs: %v",
 			net.JoinHostPort(setting.SSH.ListenHost, strconv.Itoa(setting.SSH.ListenPort)),
 			util.Iif[any](setting.SSH.ServerCiphers == nil, "default", setting.SSH.ServerCiphers),
 			util.Iif[any](setting.SSH.ServerKeyExchanges == nil, "default", setting.SSH.ServerKeyExchanges),

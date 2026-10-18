@@ -117,16 +117,12 @@ func globalBool(c *cli.Command, name string) bool {
 	return false
 }
 
-// PrepareConsoleLoggerLevel by default, use INFO level for console logger, but some sub-commands (for git/ssh protocol) shouldn't output any log to stdout.
-// Any log appears in git stdout pipe will break the git protocol, eg: client can't push and hangs forever.
+// PrepareConsoleLoggerLevel sets the bootstrap capture level: pre-configuration
+// events are buffered until an Apply replays them into the real sinks, so the
+// level gates what is worth keeping (some sub-commands for the git/ssh protocol
+// must not emit anything before their own configuration, hence FATAL).
 func PrepareConsoleLoggerLevel(defaultLevel log.Level) func(context.Context, *cli.Command) (context.Context, error) {
 	return func(ctx context.Context, c *cli.Command) (context.Context, error) {
-		if setting.InstallLock {
-			// During config loading, there might also be logs (for example: deprecation warnings).
-			// It must make sure that console logger is set up before config is loaded.
-			log.Error("Config is loaded before console logger is setup, it will cause bugs. Please fix it. CustomConf=%s", setting.CustomConf)
-			return nil, errors.New("console logger must be setup before config is loaded")
-		}
 		level := defaultLevel
 		if globalBool(c, "quiet") {
 			level = log.FATAL
@@ -134,7 +130,8 @@ func PrepareConsoleLoggerLevel(defaultLevel log.Level) func(context.Context, *cl
 		if globalBool(c, "debug") || globalBool(c, "verbose") {
 			level = log.TRACE
 		}
-		log.SetupStderrLogger(log.DEFAULT, "console-stderr", level)
+		slogLevel, _ := slog.LevelFromString(level.String())
+		slog.GetManager().SetBootstrapLevel(slogLevel)
 		return ctx, nil
 	}
 }

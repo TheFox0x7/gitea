@@ -55,12 +55,12 @@ func listen(srv *sshServer) {
 	if err != nil {
 		select {
 		case <-graceful.GetManager().IsShutdown():
-			log.Error("Failed to start SSH server: %v", err)
+			logger.Error("Failed to start SSH server: %v", err)
 		default:
 			log.Fatal("Failed to start SSH server: %v", err)
 		}
 	}
-	log.Info("SSH Listener: %s Closed", srv.addr)
+	logger.Info("SSH Listener: %s Closed", srv.addr)
 }
 
 // serve is a graceful.ServeFunction
@@ -74,7 +74,7 @@ func (srv *sshServer) serve(listener net.Listener) error {
 				return err
 			}
 			acceptDelay = min(max(2*acceptDelay, 5*time.Millisecond), time.Second)
-			log.Warn("SSH: Accept failed, retrying in %s: %v", acceptDelay, err)
+			logger.Warn("SSH: Accept failed, retrying in %s: %v", acceptDelay, err)
 			time.Sleep(acceptDelay)
 			continue
 		}
@@ -96,7 +96,7 @@ func (srv *sshServer) handleConn(netConn net.Conn) {
 		// * send invalid bytes: "banner exchange: Connection from 1.2.3.4 port 5678: invalid format"
 		// * preauth failed: "Connection closed by authenticating user SYSOP 1.2.3.4 port 5678 [preauth]"
 		// * successfully logon and disconnect: "Disconnected from user SYSOP 1.2.3.4 port 5678"
-		log.Warn("Failed connection from %s with error: %v", netConn.RemoteAddr(), err)
+		logger.Warn("Failed connection from %s with error: %v", netConn.RemoteAddr(), err)
 		return
 	}
 	defer sshConn.Close()
@@ -114,7 +114,7 @@ func (srv *sshServer) handleConn(netConn net.Conn) {
 func handleSessionChannel(ctx context.Context, conn *gossh.ServerConn, newChan gossh.NewChannel) {
 	channel, reqs, err := newChan.Accept()
 	if err != nil {
-		log.Error("SSH: Accept session channel: %v", err)
+		logger.Error("SSH: Accept session channel: %v", err)
 		return
 	}
 	defer channel.Close()
@@ -141,7 +141,7 @@ func handleSessionChannel(ctx context.Context, conn *gossh.ServerConn, newChan g
 			go gossh.DiscardRequests(reqs) // the client keeps sending while the command runs
 			status := struct{ Status uint32 }{uint32(sessionHandler(session))}
 			if _, err := channel.SendRequest("exit-status", false, gossh.Marshal(&status)); err != nil {
-				log.Error("SSH: Send exit-status: %v", err)
+				logger.Error("SSH: Send exit-status: %v", err)
 			}
 			return
 		default:

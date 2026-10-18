@@ -6,10 +6,7 @@ package slog
 import (
 	"fmt"
 	"io"
-	"os"
 	"time"
-
-	"gitea.dev/modules/util/rotatingfilewriter"
 )
 
 // ConsoleSinkOptions configures a console sink.
@@ -32,7 +29,9 @@ type FileSinkOptions struct {
 
 // ConnSinkOptions configures a network sink. DialTimeout defaults to 30s and
 // WriteTimeout to 60s (TCP only); zero means "use the default", and a negative
-// value disables the deadline.
+// value disables the deadline. Reconnect/ReconnectOnMsg are accepted for
+// config compatibility but unused: reconnection is always automatic and
+// rate-limited (see connWriter).
 type ConnSinkOptions struct {
 	Addr           string
 	Protocol       string // tcp (default), udp, unix
@@ -45,8 +44,8 @@ type ConnSinkOptions struct {
 // SinkConfig configures one sink. Name deduplicates sinks within one Apply
 // call, so multiple loggers can share one sink; Type is "console", "file" or
 // "conn"; Format defaults to legacy.
-// Level defaults to info, StacktraceLevel (legacy format only) to none,
-// BufferLen to 1000. Colorize must be set explicitly (use CanColorStdout /
+// Level defaults to info, StacktraceLevel (legacy format only) to none.
+// Colorize must be set explicitly (use CanColorStdout /
 // CanColorStderr for console sinks).
 type SinkConfig struct {
 	Name string
@@ -59,7 +58,6 @@ type SinkConfig struct {
 	Prefix          string
 	Colorize        bool
 	AddSource       bool
-	BufferLen       int
 
 	Console *ConsoleSinkOptions
 	File    *FileSinkOptions
@@ -94,16 +92,21 @@ func StderrConfig(loggerName string, level Level) Config {
 	}}}
 }
 
-// Apply builds the loggers from cfg: sinks are created fresh on every call
-// (deduplicated by name within the call, so multiple loggers can share one
-// sink), the listed loggers' trees are swapped atomically, and sinks no longer
-// referenced by any logger are stopped. Loggers not listed keep their current
-// configuration.
+// Apply validates and installs the configuration on the manager.
 func (m *Manager) Apply(cfg Config) error {
-	return m.apply(cfg, nil)
+	return cfg.provision(m, nil)
 }
 
+// apply is the testable variant with injectable sink writers.
 func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error {
+	return cfg.provision(m, sinkWriters)
+}
+
+// provision validates the configuration and installs it on the manager:
+// sinks are built fresh, the listed loggers' trees are swapped atomically,
+// and sinks no longer referenced by any logger are stopped. Loggers not
+// listed keep their current configuration.
+func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) error {
 	// validate first, so a bad config doesn't half-apply
 	for _, lc := range cfg.Loggers {
 		for _, sc := range lc.Sinks {
@@ -142,22 +145,25 @@ func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error
 				}
 				if err != nil {
 					for _, s := range built {
-						s.backend.stop()
+						s.releaseWriter()
 					}
 					return err
 				}
 				built[sc.Name] = st
 			}
-			frontends = append(frontends, newSinkFrontend(st))
+			frontends = append(frontends, newSinkFrontend(m, st))
 		}
 		trees[lc.Name] = newMultiHandler(frontends)
 	}
 
-	// phase 2: swap the trees, then stop backends no tree references anymore
+	// phase 2: swap the trees, then stop backends no tree references anymore.
+	// listed loggers leave the bootstrap buffer; the buffer itself replays
+	// into the freshly configured trees below.
 	oldTrees := make([]*multiHandler, 0, len(trees))
 	for _, lc := range cfg.Loggers {
 		l := m.getLoggerLocked(lc.Name)
 		oldTrees = append(oldTrees, l.handler.Load())
+		l.configured.Store(true)
 		l.swapHandler(trees[lc.Name])
 	}
 	live := map[*sinkState]bool{}
@@ -171,96 +177,38 @@ func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error
 		for _, st := range h.sinkStates() {
 			if !live[st] && !stopped[st] {
 				stopped[st] = true
-				st.backend.stop()
+				st.releaseWriter()
 			}
 		}
 	}
+	m.flushBufferLocked()
 	return nil
 }
 
 func (m *Manager) newSink(cfg SinkConfig) (*sinkState, error) {
-	w, err := m.newSinkWriter(cfg)
+	op := sinkWriterOpener(cfg)
+	w, release, err := m.writers.acquire(op)
 	if err != nil {
 		return nil, err
 	}
-	return m.newSinkWithWriter(cfg, w)
+	st, err := m.newSinkWithWriter(cfg, w)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	st.writerKey = op.WriterKey()
+	st.release = release // pooled: the pool closes the writer on last release
+	return st, nil
 }
 
+// newSinkWithWriter wires an externally provided writer (tests). Closing it
+// on release is the caller's contract, matching the pool's close-on-last.
 func (m *Manager) newSinkWithWriter(cfg SinkConfig, w io.WriteCloser) (*sinkState, error) {
 	st, err := newSinkState(cfg)
 	if err != nil {
 		return nil, err
 	}
-	st.backend = newSinkBackend(st.name, w, st.bufferLen, m.getPauseChan)
+	st.writer = w
+	st.release = func() { _ = w.Close() }
 	return st, nil
 }
-
-func (m *Manager) newSinkWriter(cfg SinkConfig) (io.WriteCloser, error) {
-	switch cfg.Type {
-	case "console":
-		opt := cfg.Console
-		if opt == nil {
-			opt = &ConsoleSinkOptions{}
-		}
-		if opt.Stderr {
-			return nopWriteCloser{os.Stderr}, nil
-		}
-		return nopWriteCloser{os.Stdout}, nil
-	case "file":
-		opt := cfg.File
-		if opt == nil {
-			opt = &FileSinkOptions{}
-		}
-		w, err := rotatingfilewriter.Open(opt.FileName, &rotatingfilewriter.Options{
-			Rotate:           opt.LogRotate,
-			MaximumSize:      opt.MaxSize,
-			RotateDaily:      opt.DailyRotate,
-			KeepDays:         opt.MaxDays,
-			Compress:         opt.Compress,
-			CompressionLevel: opt.CompressionLevel,
-		})
-		if err != nil {
-			// same trade-off as modules/log: a broken file sink degrades to
-			// stderr rather than disabling logging entirely
-			FallbackErrorf("unable to open log file %q: %v", opt.FileName, err)
-			return nopWriteCloser{os.Stderr}, nil
-		}
-		return w, nil
-	case "conn":
-		opt := cfg.Conn
-		if opt == nil {
-			opt = &ConnSinkOptions{}
-		}
-		protocol := opt.Protocol
-		if protocol == "" {
-			protocol = "tcp"
-		}
-		dialTimeout, writeTimeout := opt.DialTimeout, opt.WriteTimeout
-		if dialTimeout == 0 {
-			dialTimeout = 30 * time.Second
-		}
-		if writeTimeout == 0 {
-			writeTimeout = 60 * time.Second
-		}
-		return &connWriter{
-			protocol:       protocol,
-			addr:           opt.Addr,
-			reconnect:      opt.Reconnect,
-			reconnectOnMsg: opt.ReconnectOnMsg,
-			dialTimeout:    dialTimeout,
-			writeTimeout:   writeTimeout,
-		}, nil
-	default:
-		w, err := openRegisteredSink(cfg)
-		if err != nil {
-			return nil, err
-		}
-		return w, nil
-	}
-}
-
-type nopWriteCloser struct {
-	io.Writer
-}
-
-func (nopWriteCloser) Close() error { return nil }

@@ -5,6 +5,7 @@ package slog
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -12,22 +13,34 @@ import (
 // DefaultName is the name of the default logger.
 const DefaultName = "default"
 
-// Manager owns named loggers. Sinks are owned by the logger trees that
-// reference them; the manager only enumerates them (Close/Dump) and stops
-// backends when Apply leaves them unreferenced.
+// Manager coordinates named loggers. It is intentionally thin: the logger
+// registry, the default-logger fast path, the pause gate and the shared writer
+// pool live here; sink lifecycles are provisioned by Config (see
+// Config.provision) and tracked via the logger trees.
 type Manager struct {
 	mu      sync.Mutex
 	loggers map[string]*Logger
 
 	defaultLogger atomic.Pointer[Logger] // fast path for GetLogger(DefaultName)
 
-	pauseMu   sync.RWMutex
-	pauseChan chan struct{}
+	pause          pauseGate
+	writers        writerPool
+	bootstrapLevel atomic.Int32 // minimum level captured before a logger is configured
+	buffer         recordBuffer
 }
 
 // NewManager creates a new manager.
 func NewManager() *Manager {
-	return &Manager{loggers: map[string]*Logger{}}
+	m := &Manager{loggers: map[string]*Logger{}}
+	m.bootstrapLevel.Store(int32(LevelTrace)) // capture everything pre-configuration by default
+	return m
+}
+
+// SetBootstrapLevel sets the minimum level captured for loggers that have no
+// configuration yet (the CLI maps --quiet/--debug/--verbose onto it). Captured
+// events replay into the real sinks on Apply.
+func (m *Manager) SetBootstrapLevel(level Level) {
+	m.bootstrapLevel.Store(int32(level))
 }
 
 // GetLogger returns the logger with the given name, creating an empty one
@@ -61,38 +74,12 @@ func (m *Manager) getLoggerLocked(name string) *Logger {
 // PauseAll pauses all sinks: each sink goroutine stops writing (and stops
 // consuming its queue) until ResumeAll.
 func (m *Manager) PauseAll() {
-	m.pauseMu.Lock()
-	m.pauseChan = make(chan struct{})
-	m.pauseMu.Unlock()
+	m.pause.Pause()
 }
 
 // ResumeAll resumes all sinks paused by PauseAll.
 func (m *Manager) ResumeAll() {
-	m.pauseMu.Lock()
-	if m.pauseChan != nil {
-		close(m.pauseChan)
-		m.pauseChan = nil
-	}
-	m.pauseMu.Unlock()
-}
-
-func (m *Manager) getPauseChan() chan struct{} {
-	m.pauseMu.RLock()
-	defer m.pauseMu.RUnlock()
-	return m.pauseChan
-}
-
-// Close stops all sinks, flushing their queued events (bounded by timeouts),
-// and forgets all loggers. Loggers already held by callers keep working but
-// their events are dropped by the stopped backends.
-func (m *Manager) Close() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, st := range m.liveSinkStates() {
-		st.backend.stop()
-	}
-	m.loggers = map[string]*Logger{}
-	m.defaultLogger.Store(nil)
+	m.pause.Resume()
 }
 
 // AddHandler attaches a plain external slog.Handler to a named logger. It
@@ -123,6 +110,68 @@ func (m *Manager) RemoveHandler(loggerName string, h slog.Handler) {
 	l.swapHandler(newMultiHandlerChildren(children))
 }
 
+// Close stops all sinks, flushing their queued events (bounded by timeouts),
+// and forgets all loggers. Loggers already held by callers keep working but
+// their events are dropped by the stopped backends.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, st := range m.liveSinkStates() {
+		st.releaseWriter()
+	}
+	m.loggers = map[string]*Logger{}
+	m.defaultLogger.Store(nil)
+	m.buffer = recordBuffer{}
+	m.pause.Resume() // a Close during PauseAll must not wedge future writers
+}
+
+// flushBufferLocked replays buffered events into the loggers that now have a
+// real configuration; events of still-unconfigured loggers stay buffered for a
+// later Apply. Callers hold m.mu.
+func (m *Manager) flushBufferLocked() {
+	entries, dropped := m.buffer.takeAll()
+	var requeue []bufferedRecord
+	for _, e := range entries {
+		l, ok := m.loggers[e.loggerName]
+		if !ok || l.handler.Load().buffering {
+			requeue = append(requeue, e)
+			continue
+		}
+		h := l.handler.Load()
+		for _, g := range e.groups {
+			h = h.withGroup(g)
+		}
+		if len(e.attrs) > 0 {
+			h = h.withAttrs(e.attrs)
+		}
+		h.handle(e.rec, e.hi)
+	}
+	m.buffer.restore(requeue)
+	if dropped > 0 {
+		FallbackErrorf("%d early log events were dropped before the logging configuration was applied", dropped)
+	}
+}
+
+// SpillBufferedEvents writes events still held for unconfigured loggers to
+// stderr (best-effort). The CLI entry calls it once a command finishes, so
+// pre-configuration events are not lost when no Apply ever happened.
+func (m *Manager) SpillBufferedEvents() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if def := m.loggers[DefaultName]; def != nil && def.configured.Load() {
+		return // the real sinks own these events' loggers; leftovers stay buffered
+	}
+	entries, dropped := m.buffer.takeAll()
+	for _, e := range entries {
+		level := LevelName(e.rec.Level)
+		FallbackErrorf("%s [%s] %s: %s", e.rec.Time.Format("2006/01/02 15:04:05.000"),
+			strings.ToUpper(level[:1]), e.loggerName, e.rec.Message)
+	}
+	if dropped > 0 {
+		FallbackErrorf("%d early log events were dropped before any logging configuration was applied", dropped)
+	}
+}
+
 // liveSinkStates returns the deduplicated sink states of all logger trees.
 // Callers must hold m.mu.
 func (m *Manager) liveSinkStates() []*sinkState {
@@ -145,7 +194,7 @@ func (m *Manager) Dump() map[string]any {
 	defer m.mu.Unlock()
 	sinks := map[string]any{}
 	for _, st := range m.liveSinkStates() {
-		sinks[st.name] = map[string]any{
+		entry := map[string]any{
 			"type":            st.sinkType,
 			"format":          st.format,
 			"level":           LevelName(st.level.Level()),
@@ -153,8 +202,11 @@ func (m *Manager) Dump() map[string]any {
 			"colorize":        st.colorize,
 			"prefix":          st.prefix,
 			"flags":           st.flags.String(),
-			"bufferLen":       st.bufferLen,
 		}
+		if st.writerKey != "" {
+			entry["writer"] = st.writerKey // shared when another sink targets the same key
+		}
+		sinks[st.name] = entry
 	}
 	dump := map[string]any{"sinks": sinks}
 	loggers := map[string]any{}

@@ -8,6 +8,8 @@
 package log
 
 import (
+	"runtime"
+
 	"gitea.dev/modules/slog"
 )
 
@@ -39,20 +41,19 @@ type Logger interface {
 
 type LogStringer = slog.LogStringer //nolint:revive // export stutter, kept for compatibility
 
-// logger forwards the legacy Logger API to the slog engine.
+// logger forwards the legacy Logger API to the slog engine. Public methods
+// are //go:noinline and capture their caller PC themselves, so caller
+// attribution never depends on skip arithmetic through this shim.
 type logger struct {
 	l *slog.Logger
 }
 
 var _ Logger = (*logger)(nil)
 
+//go:noinline
 func (l *logger) Log(skip int, event *Event, format string, v ...any) {
-	// +2: skip this shim and the facade; pinned by TestCallerAttribution
-	if event != nil && event.Caller != "" {
-		l.l.LogWithCaller(skip+2, event.Level, event.Caller, format, v...)
-		return
-	}
-	l.l.Log(skip+2, event.Level, format, v...)
+	level, pc := eventLevelPC(event)
+	l.l.LogWithCallerPC(pc, level, eventCaller(event), skip+2, format, v...)
 }
 
 func (l *logger) GetLevel() Level {
@@ -66,34 +67,62 @@ func (l *logger) LevelEnabled(level Level) bool {
 // IsEnabled reports whether any sink would accept an event
 func (l *logger) IsEnabled() bool {
 	level := l.l.GetLevel()
-	return level != slog.LevelNone && level < slog.LevelFatal
+	return level != NONE && level < FATAL
 }
 
-// SinkNames returns the names of the sinks attached to this logger.
 func (l *logger) SinkNames() []string {
 	return l.l.SinkNames()
 }
 
+//go:noinline
 func (l *logger) Trace(format string, v ...any) {
-	l.l.Log(2, slog.LevelTrace, format, v...)
+	l.l.LogPC(shimPC(), TRACE, 3, format, v...)
 }
 
+//go:noinline
 func (l *logger) Debug(format string, v ...any) {
-	l.l.Log(2, slog.LevelDebug, format, v...)
+	l.l.LogPC(shimPC(), DEBUG, 3, format, v...)
 }
 
+//go:noinline
 func (l *logger) Info(format string, v ...any) {
-	l.l.Log(2, slog.LevelInfo, format, v...)
+	l.l.LogPC(shimPC(), INFO, 3, format, v...)
 }
 
+//go:noinline
 func (l *logger) Warn(format string, v ...any) {
-	l.l.Log(2, slog.LevelWarn, format, v...)
+	l.l.LogPC(shimPC(), WARN, 3, format, v...)
 }
 
+//go:noinline
 func (l *logger) Error(format string, v ...any) {
-	l.l.Log(2, slog.LevelError, format, v...)
+	l.l.LogPC(shimPC(), ERROR, 3, format, v...)
 }
 
+//go:noinline
 func (l *logger) Critical(format string, v ...any) {
-	l.l.Log(2, slog.LevelCritical, format, v...)
+	l.l.LogPC(shimPC(), CRITICAL, 3, format, v...)
+}
+
+// shimPC returns the PC of the caller of the calling shim function. The
+// calling function is //go:noinline, so the physical frame counting is
+// deterministic.
+func shimPC() uintptr {
+	var pcs [1]uintptr
+	runtime.Callers(3, pcs[:]) // 0=Callers, 1=shimPC, 2=shim fn, 3=caller
+	return pcs[0]
+}
+
+func eventLevelPC(event *Event) (Level, uintptr) {
+	if event == nil {
+		return INFO, 0
+	}
+	return event.Level, event.PC
+}
+
+func eventCaller(event *Event) string {
+	if event == nil {
+		return ""
+	}
+	return event.Caller
 }

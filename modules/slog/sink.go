@@ -4,14 +4,14 @@
 package slog
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 )
 
 type Format string
@@ -22,14 +22,19 @@ const (
 	FormatJSON   Format = "json"   // slog.JSONHandler
 )
 
+// maxFailedLineDump bounds the stderr dump of a failed line, so a full stderr
+// pipe cannot stall the caller.
+const maxFailedLineDump = 32 * 1024
+
 // sinkState is the shared configuration and identity of one sink. It is owned
 // by the Manager and referenced by any number of sinkFrontends (one per logger
-// tree). The zero values of Level/StacktraceLevel/Format/BufferLen are
-// normalized by newSinkState.
+// tree). The zero values of Level/StacktraceLevel/Format are normalized by
+// newSinkState.
 type sinkState struct {
-	name     string
-	sinkType string
-	format   Format
+	name      string
+	sinkType  string
+	format    Format
+	writerKey string
 
 	level *slog.LevelVar
 
@@ -38,9 +43,19 @@ type sinkState struct {
 	colorize        bool
 	stacktraceLevel Level
 	addSource       bool
-	bufferLen       int
 
-	backend *sinkBackend
+	writer io.WriteCloser // the raw writer; frontends wrap it in the pause gate
+
+	release func() // drops this sink's writer reference; the last one closes it
+}
+
+// releaseWriter must be called after the sink is no longer reachable from any
+// logger tree (a racing in-flight write of an orphaned sink surfaces as a
+// write error and lands on stderr).
+func (st *sinkState) releaseWriter() {
+	if st.release != nil {
+		st.release()
+	}
 }
 
 func newSinkState(cfg SinkConfig) (*sinkState, error) {
@@ -55,10 +70,6 @@ func newSinkState(cfg SinkConfig) (*sinkState, error) {
 	if stacktraceLevel == 0 {
 		stacktraceLevel = LevelNone
 	}
-	bufferLen := cfg.BufferLen
-	if bufferLen == 0 {
-		bufferLen = 1000
-	}
 	level := new(slog.LevelVar)
 	level.Set(cfg.Level) // zero Level == LevelInfo
 	return &sinkState{
@@ -71,8 +82,6 @@ func newSinkState(cfg SinkConfig) (*sinkState, error) {
 		colorize:        cfg.Colorize,
 		stacktraceLevel: stacktraceLevel,
 		addSource:       cfg.AddSource,
-		bufferLen:       bufferLen,
-		backend:         nil, // set by newSink
 	}, nil
 }
 
@@ -89,139 +98,41 @@ func (st *sinkState) wantsRawArgs() bool {
 	return st.format == FormatLegacy && st.colorize
 }
 
-// sinkItem is one queued unit: either fully formatted bytes (legacy, rendered
-// on the caller goroutine) or a cloned record deferred to the sink goroutine.
-type sinkItem struct {
-	buf  []byte
-	rec  *slog.Record
-	fmtH slog.Handler // stdlib-format handler that renders rec
-}
-
-// sinkBackend owns the queue, the writer goroutine and the io.Writer. It is
-// never closed while a racing enqueue can be in flight: stop is signaled via
-// the done channel and enqueues select on it, so the worst case is a dropped
-// event, never a send-on-closed-channel panic.
-type sinkBackend struct {
-	name     string
-	queue    chan sinkItem
-	done     chan struct{}
-	exited   chan struct{}
-	writer   io.WriteCloser
-	pause    func() chan struct{}
-	stopOnce sync.Once
-}
-
-func newSinkBackend(name string, writer io.WriteCloser, bufferLen int, pause func() chan struct{}) *sinkBackend {
-	b := &sinkBackend{
-		name:   name,
-		queue:  make(chan sinkItem, bufferLen),
-		done:   make(chan struct{}),
-		exited: make(chan struct{}),
-		writer: writer,
-		pause:  pause,
-	}
-	go b.run()
-	return b
-}
-
-func (b *sinkBackend) enqueue(it sinkItem) {
-	select {
-	case <-b.done:
-	case b.queue <- it:
-	default:
-		FallbackErrorf("log sink %q queue is full, event dropped", b.name)
-	}
-}
-
-func (b *sinkBackend) run() {
-	defer close(b.exited)
-	defer b.writer.Close()
-	for {
-		select {
-		case <-b.done:
-			b.drain()
-			return
-		case it := <-b.queue:
-			b.waitPaused()
-			b.write(it)
-		}
-	}
-}
-
-// drain writes out what is already queued, best-effort with a deadline so a
-// wedged writer cannot stall shutdown indefinitely.
-func (b *sinkBackend) drain() {
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case it := <-b.queue:
-			b.write(it)
-		default:
-			return
-		}
-		select {
-		case <-deadline:
-			FallbackErrorf("log sink %q unable to drain in time, remaining events dropped", b.name)
-			return
-		default:
-		}
-	}
-}
-
-func (b *sinkBackend) write(it sinkItem) {
-	var err error
-	if it.rec != nil {
-		err = it.fmtH.Handle(context.Background(), *it.rec)
-	} else {
-		_, err = b.writer.Write(it.buf)
-	}
-	if err != nil {
-		FallbackErrorf("unable to write log message of %q: %v", b.name, err)
-	}
-}
-
-func (b *sinkBackend) waitPaused() {
-	if ch := b.pause(); ch != nil {
-		select {
-		case <-ch:
-		case <-b.done:
-		}
-	}
-}
-
-func (b *sinkBackend) stop() {
-	b.stopOnce.Do(func() { close(b.done) })
-	select {
-	case <-b.exited:
-	case <-time.After(2 * time.Second):
-		FallbackErrorf("unable to stop log sink %q in time, skip", b.name)
-	}
-}
-
-// sinkFrontend is the per-tree slog.Handler face of a sink. It is cheap to
-// clone so WithAttrs/WithGroup can return new handlers without touching the
-// shared backend — slog requires handlers to not mutate under With*.
+// sinkFrontend is the per-tree slog.Handler face of a sink. Writes happen
+// inline on the caller goroutine through the pause-gated writer; on a write
+// error the formatted line is dumped to stderr so no event is silently lost.
 type sinkFrontend struct {
 	st *sinkState
 
-	inner     slog.Handler // stdlib formats: JSON/Text handler bound to the backend writer
-	withAttrs []slog.Attr  // legacy format: With-state rendered as key=value suffix
-	groups    []string     // legacy format: group names, flattened into the suffix
+	pause *pauseGate
+
+	opts *slog.HandlerOptions
+	// writer is st.writer gated by the pause gate; inner renders stdlib
+	// formats (JSON/logfmt) straight into it
+	writer io.Writer
+	inner  slog.Handler
+	// shapers replay this frontend's With-state onto a fresh handler, used to
+	// re-render a failed line into a buffer on the error path
+	shapers []func(slog.Handler) slog.Handler
+	// legacy With-state: rendered as a key=value suffix (see format_legacy)
+	withAttrs []slog.Attr
+	groups    []string
 }
 
 var _ slog.Handler = (*sinkFrontend)(nil)
 
-func newSinkFrontend(st *sinkState) *sinkFrontend {
-	f := &sinkFrontend{st: st}
-	opts := &slog.HandlerOptions{
-		AddSource:   st.addSource,
-		ReplaceAttr: renameFatalLevel,
+func newSinkFrontend(m *Manager, st *sinkState) *sinkFrontend {
+	f := &sinkFrontend{
+		st:    st,
+		pause: &m.pause,
+		opts:  &slog.HandlerOptions{AddSource: st.addSource, ReplaceAttr: renameFatalLevel},
 	}
+	f.writer = &gateWriter{w: st.writer, pause: &m.pause}
 	switch st.format {
 	case FormatJSON:
-		f.inner = slog.NewJSONHandler(st.backend.writer, opts)
+		f.inner = slog.NewJSONHandler(f.writer, f.opts)
 	case FormatLogfmt:
-		f.inner = slog.NewTextHandler(st.backend.writer, opts)
+		f.inner = slog.NewTextHandler(f.writer, f.opts)
 	}
 	return f
 }
@@ -248,14 +159,41 @@ func (f *sinkFrontend) enabled(level Level) bool {
 // handle is the internal dispatch; hi travels beside the record and never
 // becomes a record attr
 func (f *sinkFrontend) handle(r slog.Record, hi *hiddenInfo) {
+	var err error
+	var line []byte
 	if f.st.format == FormatLegacy {
-		// legacy formats eagerly on the caller goroutine: colorized
-		// re-rendering must not cross goroutines
-		f.st.backend.enqueue(sinkItem{buf: f.st.formatLegacy(&r, f, hi)})
-		return
+		line = f.st.formatLegacy(&r, f, hi)
+		_, err = f.writer.Write(line)
+	} else {
+		err = f.inner.Handle(context.Background(), r)
 	}
-	rc := r.Clone() // formatting is deferred to the sink goroutine
-	f.st.backend.enqueue(sinkItem{rec: &rc, fmtH: f.inner})
+	if err != nil {
+		f.dumpFailedLine(&r, line, err)
+	}
+}
+
+// dumpFailedLine preserves a line the sink could not write (Caddy's net-writer
+// behavior) by re-rendering it to stderr, bounded.
+func (f *sinkFrontend) dumpFailedLine(r *slog.Record, legacyLine []byte, err error) {
+	dump := legacyLine
+	if dump == nil {
+		var buf bytes.Buffer
+		var h slog.Handler = slog.NewJSONHandler(&buf, f.opts)
+		if f.st.format == FormatLogfmt {
+			h = slog.NewTextHandler(&buf, f.opts)
+		}
+		for _, shape := range f.shapers {
+			h = shape(h)
+		}
+		if e := h.Handle(context.Background(), *r); e == nil {
+			dump = buf.Bytes()
+		}
+	}
+	if len(dump) > maxFailedLineDump {
+		dump = dump[:maxFailedLineDump]
+	}
+	_, _ = os.Stderr.Write(dump)
+	FallbackErrorf("unable to write log message of %q: %v", f.st.name, err)
 }
 
 // Handle only serves the slog.Handler interface (the stdlib slog path)
@@ -270,10 +208,12 @@ func (f *sinkFrontend) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (f *sinkFrontend) cloneWithAttrs(attrs []slog.Attr) *sinkFrontend {
 	nf := *f
+	nf.shapers = append(slices.Clone(f.shapers), func(h slog.Handler) slog.Handler {
+		return h.WithAttrs(attrs)
+	})
+	nf.withAttrs = append(slices.Clone(f.withAttrs), attrs...)
 	if f.inner != nil {
 		nf.inner = f.inner.WithAttrs(attrs)
-	} else {
-		nf.withAttrs = append(slices.Clone(f.withAttrs), attrs...)
 	}
 	return &nf
 }
@@ -287,10 +227,12 @@ func (f *sinkFrontend) cloneWithGroup(name string) *sinkFrontend {
 		return f
 	}
 	nf := *f
+	nf.shapers = append(slices.Clone(f.shapers), func(h slog.Handler) slog.Handler {
+		return h.WithGroup(name)
+	})
+	nf.groups = append(slices.Clone(f.groups), name)
 	if f.inner != nil {
 		nf.inner = f.inner.WithGroup(name)
-	} else {
-		nf.groups = append(slices.Clone(f.groups), name)
 	}
 	return &nf
 }

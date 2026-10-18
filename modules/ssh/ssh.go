@@ -59,10 +59,10 @@ func sessionHandler(session *sshSession) int {
 	// the conn permissions are the ones of the key which really authenticated, see publicKeyHandler
 	keyID := session.conn.Permissions.Extensions[giteaPermissionExtensionKeyID]
 
-	log.Trace("SSH: Payload: %v", session.rawCmd)
+	logger.Trace("SSH: Payload: %v", session.rawCmd)
 
 	args := []string{"--config=" + setting.CustomConf, "serv", "key-" + keyID}
-	log.Trace("SSH: Arguments: %v", args)
+	logger.Trace("SSH: Arguments: %v", args)
 
 	ctx, cancel := context.WithCancel(session.ctx)
 	defer cancel()
@@ -85,21 +85,21 @@ func sessionHandler(session *sshSession) int {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Error("SSH: StdoutPipe: %v", err)
+		logger.Error("SSH: StdoutPipe: %v", err)
 		return 1
 	}
 	defer stdout.Close()
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		log.Error("SSH: StderrPipe: %v", err)
+		logger.Error("SSH: StderrPipe: %v", err)
 		return 1
 	}
 	defer stderr.Close()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Error("SSH: StdinPipe: %v", err)
+		logger.Error("SSH: StdinPipe: %v", err)
 		return 1
 	}
 	defer stdin.Close()
@@ -107,28 +107,28 @@ func sessionHandler(session *sshSession) int {
 	wg := &sync.WaitGroup{}
 
 	if err = cmd.Start(); err != nil {
-		log.Error("SSH: Start: %v", err)
+		logger.Error("SSH: Start: %v", err)
 		return 1
 	}
 
 	go func() {
 		defer stdin.Close()
 		if _, err := io.Copy(stdin, session); err != nil {
-			log.Error("Failed to write session to stdin. %s", err)
+			logger.Error("Failed to write session to stdin. %s", err)
 		}
 	}()
 
 	wg.Go(func() {
 		defer stdout.Close()
 		if _, err := io.Copy(session, stdout); err != nil {
-			log.Error("Failed to write stdout to session. %s", err)
+			logger.Error("Failed to write stdout to session. %s", err)
 		}
 	})
 
 	wg.Go(func() {
 		defer stderr.Close()
 		if _, err := io.Copy(session.Stderr(), stderr); err != nil {
-			log.Error("Failed to write stderr to session. %s", err)
+			logger.Error("Failed to write stderr to session. %s", err)
 		}
 	})
 
@@ -142,7 +142,7 @@ func sessionHandler(session *sshSession) int {
 		// Cannot use errors.Is here because ExitError doesn't implement Is
 		// Thus errors.Is will do equality test NOT type comparison
 		if _, ok := err.(*exec.ExitError); !ok {
-			log.Error("SSH: Wait: %v", err)
+			logger.Error("SSH: Wait: %v", err)
 		}
 	}
 
@@ -161,27 +161,27 @@ func keyPermissions(keyID int64) *gossh.Permissions {
 func publicKeyHandler(ctx context.Context, conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
 	sshPubKey := string(gossh.MarshalAuthorizedKey(key))
 	fingerprint := gossh.FingerprintSHA256(key)
-	log.Debug("Handle Public Key: Fingerprint: %s from %s", fingerprint, conn.RemoteAddr())
+	logger.Debug("Handle Public Key: Fingerprint: %s from %s", fingerprint, conn.RemoteAddr())
 
 	if conn.User() != setting.SSH.BuiltinServerUser {
-		log.Warn("Invalid SSH username %s - must use %s for all git operations via ssh", conn.User(), setting.SSH.BuiltinServerUser)
-		log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+		logger.Warn("Invalid SSH username %s - must use %s for all git operations via ssh", conn.User(), setting.SSH.BuiltinServerUser)
+		logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 		return nil, util.ErrPermissionDenied
 	}
 
 	// check if we have a certificate
 	if cert, ok := key.(*gossh.Certificate); ok {
-		log.Debug("Handle Certificate: %s Fingerprint: %s is a certificate", conn.RemoteAddr(), fingerprint)
+		logger.Debug("Handle Certificate: %s Fingerprint: %s is a certificate", conn.RemoteAddr(), fingerprint)
 
 		if len(setting.SSH.TrustedUserCAKeys) == 0 {
-			log.Warn("Certificate Rejected: No trusted certificate authorities for this server")
-			log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+			logger.Warn("Certificate Rejected: No trusted certificate authorities for this server")
+			logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 			return nil, util.ErrPermissionDenied
 		}
 
 		if cert.CertType != gossh.UserCert {
-			log.Warn("Certificate Rejected: Not a user certificate")
-			log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+			logger.Warn("Certificate Rejected: Not a user certificate")
+			logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 			return nil, util.ErrPermissionDenied
 		}
 
@@ -199,8 +199,8 @@ func publicKeyHandler(ctx context.Context, conn gossh.ConnMetadata, key gossh.Pu
 
 		// check the CA of the cert
 		if !certChecker.IsUserAuthority(cert.SignatureKey) {
-			log.Warn("Principal Rejected: %s Untrusted Authority Signature Fingerprint %s", conn.RemoteAddr(), gossh.FingerprintSHA256(cert.SignatureKey))
-			log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+			logger.Warn("Principal Rejected: %s Untrusted Authority Signature Fingerprint %s", conn.RemoteAddr(), gossh.FingerprintSHA256(cert.SignatureKey))
+			logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 			return nil, util.ErrPermissionDenied
 		}
 
@@ -209,44 +209,44 @@ func publicKeyHandler(ctx context.Context, conn gossh.ConnMetadata, key gossh.Pu
 			pkey, err := asymkey_model.SearchPrincipalKey(ctx, principal)
 			if err != nil {
 				if asymkey_model.IsErrKeyNotExist(err) {
-					log.Debug("Principal Rejected: %s Unknown Principal: %s", conn.RemoteAddr(), principal)
+					logger.Debug("Principal Rejected: %s Unknown Principal: %s", conn.RemoteAddr(), principal)
 					continue principalLoop
 				}
-				log.Error("SearchPrincipalKey: %v", err)
+				logger.Error("SearchPrincipalKey: %v", err)
 				return nil, util.ErrPermissionDenied
 			}
 
 			// validate the cert for this principal
 			if err := certChecker.CheckCert(principal, cert); err != nil {
 				// User is presenting an invalid certificate - STOP any further processing
-				log.Warn("Invalid Certificate KeyID %s with Signature Fingerprint %s presented for Principal: %s from %s", cert.KeyId, gossh.FingerprintSHA256(cert.SignatureKey), principal, conn.RemoteAddr())
-				log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+				logger.Warn("Invalid Certificate KeyID %s with Signature Fingerprint %s presented for Principal: %s from %s", cert.KeyId, gossh.FingerprintSHA256(cert.SignatureKey), principal, conn.RemoteAddr())
+				logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 				return nil, util.ErrPermissionDenied
 			}
 
-			log.Debug("Successfully authenticated: %s Certificate Fingerprint: %s Principal: %s", conn.RemoteAddr(), fingerprint, principal)
+			logger.Debug("Successfully authenticated: %s Certificate Fingerprint: %s Principal: %s", conn.RemoteAddr(), fingerprint, principal)
 			return keyPermissions(pkey.ID), nil
 		}
 
-		log.Warn("From %s Fingerprint: %s is a certificate, but no valid principals found", conn.RemoteAddr(), fingerprint)
-		log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+		logger.Warn("From %s Fingerprint: %s is a certificate, but no valid principals found", conn.RemoteAddr(), fingerprint)
+		logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 		return nil, util.ErrPermissionDenied
 	}
 
-	log.Debug("Handle Public Key: %s Fingerprint: %s is not a certificate", conn.RemoteAddr(), fingerprint)
+	logger.Debug("Handle Public Key: %s Fingerprint: %s is not a certificate", conn.RemoteAddr(), fingerprint)
 
 	pkey, err := asymkey_model.SearchPublicKeyForSSH(ctx, sshPubKey)
 	if err != nil {
 		if asymkey_model.IsErrKeyNotExist(err) {
-			log.Warn("Unknown public key: %s from %s", fingerprint, conn.RemoteAddr())
-			log.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
+			logger.Warn("Unknown public key: %s from %s", fingerprint, conn.RemoteAddr())
+			logger.Warn("Failed authentication attempt from %s", conn.RemoteAddr())
 			return nil, util.ErrPermissionDenied
 		}
-		log.Error("SearchPublicKeyForSSH: %v", err)
+		logger.Error("SearchPublicKeyForSSH: %v", err)
 		return nil, util.ErrPermissionDenied
 	}
 
-	log.Debug("Successfully authenticated: %s Public Key Fingerprint: %s", conn.RemoteAddr(), fingerprint)
+	logger.Debug("Successfully authenticated: %s Public Key Fingerprint: %s", conn.RemoteAddr(), fingerprint)
 	return keyPermissions(pkey.ID), nil
 }
 
@@ -268,7 +268,7 @@ func Listen(host string, port int, ciphers, keyExchanges, macs []string) {
 		hostKeyDir := filepath.Dir(setting.SSH.ServerHostKeys[0])
 		err := os.MkdirAll(hostKeyDir, os.ModePerm)
 		if err != nil {
-			log.Error("Failed to create dir %s: %v", hostKeyDir, err)
+			logger.Error("Failed to create dir %s: %v", hostKeyDir, err)
 		}
 		hostKeyFiles, err = InitDefaultHostKeys(hostKeyDir)
 		if err != nil {
@@ -282,12 +282,12 @@ func Listen(host string, port int, ciphers, keyExchanges, macs []string) {
 		if err == nil {
 			var signer gossh.Signer
 			if signer, err = gossh.ParsePrivateKey(pemBytes); err == nil {
-				log.Info("Adding SSH host key: %s", keyFile)
+				logger.Info("Adding SSH host key: %s", keyFile)
 				hostSigners = append(hostSigners, signer)
 				continue
 			}
 		}
-		log.Error("Failed to load SSH host key %s: %v", keyFile, err)
+		logger.Error("Failed to load SSH host key %s: %v", keyFile, err)
 	}
 
 	if len(hostSigners) == 0 {

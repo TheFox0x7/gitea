@@ -21,7 +21,6 @@ type LogGlobalConfig struct {
 	Mode               string
 	Level              log.Level
 	StacktraceLogLevel log.Level
-	BufferLen          int
 
 	EnableSSHLog bool
 
@@ -38,7 +37,6 @@ func loadLogGlobalFrom(rootCfg ConfigProvider) {
 
 	Log.Level = log.LevelFromString(sec.Key("LEVEL").MustString(log.INFO.String()))
 	Log.StacktraceLogLevel = log.LevelFromString(sec.Key("STACKTRACE_LEVEL").MustString(log.NONE.String()))
-	Log.BufferLen = sec.Key("BUFFER_LEN").MustInt(10000)
 	Log.Mode = sec.Key("MODE").MustString("console")
 
 	Log.RootPath = sec.Key("ROOT_PATH").MustString(filepath.Join(AppWorkPath, "log"))
@@ -47,7 +45,7 @@ func loadLogGlobalFrom(rootCfg ConfigProvider) {
 	}
 	Log.RootPath = util.FilePathJoinAbs(Log.RootPath)
 
-	Log.EnableSSHLog = sec.Key("ENABLE_SSH_LOG").MustBool(false)
+	Log.EnableSSHLog = sec.HasKey("ENABLE_SSH_LOG") && sec.Key("ENABLE_SSH_LOG").MustBool(false)
 
 	Log.AccessLogTemplate = sec.Key("ACCESS_LOG_TEMPLATE").MustString(accessLogTemplateDefault)
 	Log.RequestIDHeaders = sec.Key("REQUEST_ID_HEADERS").Strings(",")
@@ -93,6 +91,16 @@ func prepareLoggerConfig(rootCfg ConfigProvider) {
 	}
 	if sec.HasKey("ENABLE_XORM_LOG") && !sec.Key("ENABLE_XORM_LOG").MustBool() {
 		sec.Key("logger.xorm.MODE").SetValue("")
+	}
+
+	// the ssh component follows the default logger unless explicitly configured;
+	// an explicit ENABLE_SSH_LOG = false disables it (the historical setting was
+	// dead code before)
+	switch {
+	case sec.HasKey("ENABLE_SSH_LOG") && !sec.Key("ENABLE_SSH_LOG").MustBool():
+		sec.Key("logger.ssh.MODE").SetValue("")
+	case !sec.HasKey("logger.ssh.MODE"):
+		sec.Key("logger.ssh.MODE").SetValue(sec.Key("logger.default.MODE").String())
 	}
 }
 
@@ -212,7 +220,9 @@ func initManagedLoggers(manager *slog.Manager, cfg ConfigProvider) {
 	prepareLoggerConfig(cfg)
 
 	config := slog.Config{}
-	for _, name := range []string{log.DEFAULT, "access", "router", "xorm"} {
+	// the closed set of named loggers users can configure; components opt in
+	// by logging through their named logger (e.g. modules/ssh → "ssh")
+	for _, name := range []string{log.DEFAULT, "access", "router", "xorm", "ssh"} {
 		if loggerConfig, ok := loggerConfigByName(cfg, name); ok {
 			config.Loggers = append(config.Loggers, loggerConfig)
 		}
@@ -242,11 +252,9 @@ func loggerConfigByName(rootCfg ConfigProvider, loggerName string) (slog.LoggerC
 		if modeName == "" {
 			continue
 		}
-		sink := loadLogModeByName(rootCfg, loggerName, modeName)
-		if sink.BufferLen == 0 {
-			sink.BufferLen = Log.BufferLen
-		}
-		loggerConfig.Sinks = append(loggerConfig.Sinks, sink)
+		// BUFFER_LEN is accepted in configs but ignored: the engine writes
+		// synchronously, there is no queue to size
+		loggerConfig.Sinks = append(loggerConfig.Sinks, loadLogModeByName(rootCfg, loggerName, modeName))
 	}
 	return loggerConfig, true
 }

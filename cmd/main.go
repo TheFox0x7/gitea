@@ -12,6 +12,7 @@ import (
 
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
+	"gitea.dev/modules/slog"
 
 	"github.com/urfave/cli/v3"
 )
@@ -180,6 +181,9 @@ func RunMainApp(app *cli.Command, args ...string) error {
 	// the completion subcommands are built during app.Run, after the Walk above, so cover them via this hook
 	app.ConfigureShellCompletionCommand = setCLIOnUsageError
 	err := app.Run(ctx, args)
+	// pre-configuration events of commands that never applied a logging
+	// configuration would otherwise be lost (mirrors Caddy's flush-on-exit)
+	slog.GetManager().SpillBufferedEvents()
 	if err == nil {
 		return nil
 	}

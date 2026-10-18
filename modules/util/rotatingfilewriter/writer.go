@@ -69,8 +69,13 @@ func Open(filename string, options *Options) (*RotatingFileWriter, error) {
 }
 
 func (rfw *RotatingFileWriter) Write(b []byte) (int, error) {
+	// writers are shared between log sinks, and rotation swaps the fd, so
+	// writes and rotations must not interleave
+	rfw.mu.Lock()
+	defer rfw.mu.Unlock()
+
 	if rfw.options.Rotate && ((rfw.options.MaximumSize > 0 && rfw.currentSize >= rfw.options.MaximumSize) || (rfw.options.RotateDaily && time.Now().Day() != rfw.openDate)) {
-		if err := rfw.DoRotate(); err != nil {
+		if err := rfw.doRotate(); err != nil {
 			// if this writer is used by a logger system, it's the logger system's responsibility to handle/show the error
 			return 0, err
 		}
@@ -124,12 +129,15 @@ func (rfw *RotatingFileWriter) ReleaseReopen() error {
 
 // DoRotate the log file creating a backup like xx.2013-01-01.2
 func (rfw *RotatingFileWriter) DoRotate() error {
+	rfw.mu.Lock()
+	defer rfw.mu.Unlock()
+	return rfw.doRotate()
+}
+
+func (rfw *RotatingFileWriter) doRotate() error { // callers hold mu
 	if !rfw.options.Rotate {
 		return nil
 	}
-
-	rfw.mu.Lock()
-	defer rfw.mu.Unlock()
 
 	prefix := fmt.Sprintf("%s.%s.", rfw.fd.Name(), time.Now().Format("2006-01-02"))
 

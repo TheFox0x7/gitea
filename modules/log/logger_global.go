@@ -5,6 +5,7 @@ package log
 
 import (
 	"os"
+	"runtime"
 
 	"gitea.dev/modules/slog"
 )
@@ -16,18 +17,25 @@ func FallbackErrorf(format string, args ...any) {
 
 // Deprecated: use slog.GetLevel.
 func GetLevel() Level {
-	return GetLogger(DEFAULT).GetLevel()
+	return slog.Default().GetLevel()
 }
 
 // Deprecated: use slog.Log.
+//
+//go:noinline
 func Log(skip int, level Level, format string, v ...any) {
-	// codeql[disable-next-line=go/clear-text-logging]
-	GetLogger(DEFAULT).Log(skip+1, &Event{Level: level}, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(skip+2, pcs[:]) // 0=Callers, 1=this fn, 2=caller
+	slog.Default().LogWithCallerPC(pcs[0], level, "", skip+3, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelTrace.
+//
+//go:noinline
 func Trace(format string, v ...any) {
-	Log(2, TRACE, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller
+	slog.Default().LogPC(pcs[0], TRACE, 5, format, v...)
 }
 
 // Deprecated: use slog.GetLogger(...).LevelEnabled(slog.LevelTrace).
@@ -36,36 +44,60 @@ func IsTrace() bool {
 }
 
 // Deprecated: use slog.Log with slog.LevelDebug.
+//
+//go:noinline
 func Debug(format string, v ...any) {
-	Log(2, DEBUG, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], DEBUG, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelInfo.
+//
+//go:noinline
 func Info(format string, v ...any) {
-	Log(2, INFO, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], INFO, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelWarn.
+//
+//go:noinline
 func Warn(format string, v ...any) {
-	Log(2, WARN, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], WARN, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelError.
+//
+//go:noinline
 func Error(format string, v ...any) {
-	Log(2, ERROR, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], ERROR, 5, format, v...)
 }
 
-// Deprecated: use slog.Log with slog.LevelError.
+// Deprecated: use slog.Log with slog.LevelError and an explicit skip.
+//
+//go:noinline
 func ErrorWithSkip(skip int, format string, v ...any) {
-	Log(skip+2, ERROR, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], ERROR, 5+skip, format, v...)
 }
 
 var OsExiter = os.Exit
 
 // Fatal records fatal log and exit process
 // Deprecated: handle fatal errors explicitly instead.
+//
+//go:noinline
 func Fatal(format string, v ...any) {
-	Log(2, FATAL, format, v...)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	slog.Default().LogPC(pcs[0], FATAL, 5, format, v...)
 	GetManager().Close()
 	OsExiter(1)
 }
@@ -75,7 +107,7 @@ func GetLogger(name string) Logger {
 	return GetManager().GetLogger(name)
 }
 
-// Deprecated: use slog.GetLogger(...).GetLevel() != slog.LevelNone.
+// Deprecated: use slog.GetLogger(...).LevelEnabled(slog.LevelInfo).
 func IsLoggerEnabled(name string) bool {
 	return GetManager().GetLogger(name).IsEnabled()
 }

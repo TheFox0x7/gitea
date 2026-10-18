@@ -33,6 +33,7 @@ type multiHandler struct {
 	needsMessage    bool  // some sink renders Record.Message (not colorized legacy)
 	stacktraceLevel Level // minimum legacy StacktraceLevel; LevelNone if none
 	level           Level // lowest sink level, for GetLevel; LevelNone if no sinks
+	buffering       bool  // some child is a bootstrap bufferChild
 }
 
 var _ slog.Handler = (*multiHandler)(nil)
@@ -52,6 +53,14 @@ func newMultiHandlerChildren(children []child) *multiHandler {
 		level:           LevelNone,
 	}
 	for _, c := range h.children {
+		if _, ok := c.(bufferChild); ok {
+			h.buffering = true
+			// the buffer keeps the rendered message and prefilled source so
+			// replayed events are indistinguishable from direct ones
+			h.needsMessage = true
+			h.needsSource = true
+			continue
+		}
 		states := c.states()
 		if len(states) == 0 {
 			// plain external handlers render Record.Message and may resolve
@@ -123,6 +132,10 @@ func (h *multiHandler) sinkNames() []string {
 }
 
 func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return h.withAttrs(attrs)
+}
+
+func (h *multiHandler) withAttrs(attrs []slog.Attr) *multiHandler {
 	nh := *h
 	nh.children = slices.Clone(h.children)
 	for i, c := range h.children {
@@ -132,6 +145,10 @@ func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *multiHandler) WithGroup(name string) slog.Handler {
+	return h.withGroup(name)
+}
+
+func (h *multiHandler) withGroup(name string) *multiHandler {
 	if name == "" {
 		return h
 	}

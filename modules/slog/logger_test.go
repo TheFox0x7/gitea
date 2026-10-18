@@ -52,7 +52,7 @@ func (r *testRecorder) String() string {
 }
 
 // newTestLogger builds a logger with one buffer sink; mutate adjusts the sink
-// config before creation. All output is deterministic after m.Close() flushes.
+// config before creation. All output is deterministic after m.Close().
 func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger, *testRecorder) {
 	t.Helper()
 	m := NewManager()
@@ -64,7 +64,7 @@ func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger
 	st, err := m.newSinkWithWriter(cfg, nopWriteCloser{rec})
 	require.NoError(t, err)
 	l := m.GetLogger("test")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, st)}))
 	t.Cleanup(m.Close)
 	return m, l, rec
 }
@@ -121,7 +121,7 @@ func TestLevelFanout(t *testing.T) {
 	stB, err := m.newSinkWithWriter(SinkConfig{Name: "b", Type: "console", Level: LevelDebug, Flags: FlagsFromString("none")}, nopWriteCloser{recB})
 	require.NoError(t, err)
 	l := m.GetLogger("fanout")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stA), newSinkFrontend(stB)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, stA), newSinkFrontend(m, stB)}))
 
 	assert.Equal(t, LevelDebug, l.GetLevel())
 
@@ -230,23 +230,37 @@ func TestApplyValidation(t *testing.T) {
 }
 
 func TestPauseResume(t *testing.T) {
-	t.Run("drain while paused", func(t *testing.T) {
-		m, l, rec := newTestLogger(t, withFlags(0))
-		m.PauseAll()
-		l.Info("paused-flush")
-		m.Close() // drain must bypass pause
-		assert.Contains(t, rec.String(), "paused-flush")
-	})
+	// sync engine: a paused manager stalls writers inside the write instead
+	// of buffering or dropping; Resume releases them
+	m, l, rec := newTestLogger(t, withFlags(0))
+	m.PauseAll()
+	m.PauseAll() // idempotent
 
-	t.Run("resume writes", func(t *testing.T) {
-		m, l, rec := newTestLogger(t, withFlags(0))
-		m.PauseAll()
-		l.Info("after-resume")
-		m.ResumeAll()
-		assert.Eventually(t, func() bool {
-			return strings.Contains(rec.String(), "after-resume")
-		}, 2*time.Second, 10*time.Millisecond)
-	})
+	done := make(chan struct{})
+	go func() {
+		l.Info("paused-blocks")
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("write returned while paused")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	m.ResumeAll()
+	m.ResumeAll() // safe without a matching Pause count
+	<-done
+	assert.Contains(t, rec.String(), "paused-blocks")
+}
+
+func TestSyncWritesNeverDrop(t *testing.T) {
+	// the sync engine has no queue to overflow: every accepted event lands
+	m, l, rec := newTestLogger(t, withFlags(0))
+	for i := range 1000 {
+		l.Info("event %d", i)
+	}
+	m.Close()
+	assert.Equal(t, 1000, strings.Count(rec.String(), "\n"))
 }
 
 func TestProtectSensitiveInfo(t *testing.T) {
@@ -275,7 +289,7 @@ func TestMixedSinkFanout(t *testing.T) {
 	stJ, err := m.newSinkWithWriter(SinkConfig{Name: "json", Type: "console", Level: LevelInfo, Format: FormatJSON}, nopWriteCloser{recJ})
 	require.NoError(t, err)
 	l := m.GetLogger("mixed")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stL), newSinkFrontend(stJ)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, stL), newSinkFrontend(m, stJ)}))
 
 	l.Info("hello %s", "world")
 	m.Close()
@@ -312,42 +326,6 @@ func TestFatalEarlyFallback(t *testing.T) {
 	assert.Contains(t, string(bs), "boom 42")
 	assert.NotContains(t, string(bs), "late")
 	assert.Contains(t, rec.String(), "late")
-}
-
-func TestOverflowDrop(t *testing.T) {
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	oldStderr := os.Stderr
-	os.Stderr = w
-	m := NewManager()
-	t.Cleanup(func() {
-		os.Stderr = oldStderr
-		m.Close()
-	})
-
-	rec := &testRecorder{}
-	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{{
-		Name:  "default",
-		Sinks: []SinkConfig{{Name: "s", Type: "console", Level: LevelInfo, Flags: FlagsFromString("none"), BufferLen: 1}},
-	}}}, map[string]io.WriteCloser{"s": rec}))
-
-	// paused consumer: the queue (cap 1) fills, the rest drops to stderr
-	m.PauseAll()
-	for i := range 10 {
-		m.GetLogger("default").Info("overflow %d", i)
-	}
-	m.ResumeAll()
-	m.Close()
-
-	require.NoError(t, w.Close())
-	bs, err := io.ReadAll(r)
-	require.NoError(t, err)
-	assert.Contains(t, string(bs), "queue is full")
-	// which events survive is racy; the invariants are: the first event lands,
-	// the last is dropped, and at most the in-flight one + queue cap pass
-	assert.Contains(t, rec.String(), "overflow 0")
-	assert.NotContains(t, rec.String(), "overflow 9")
-	assert.LessOrEqual(t, strings.Count(strings.TrimSpace(rec.String()), "\n")+1, 2)
 }
 
 func TestStacktraceLevel(t *testing.T) {
@@ -393,6 +371,13 @@ func TestUnresponsiveConnSink(t *testing.T) {
 	require.NoError(t, err)
 	oldStderr := os.Stderr
 	os.Stderr = w
+	// the write-failure path dumps the failed lines to stderr: drain it
+	// concurrently or a full pipe would stall the sink goroutine
+	drained := make(chan []byte, 1)
+	go func() {
+		bs, _ := io.ReadAll(r)
+		drained <- bs
+	}()
 
 	rec := &testRecorder{}
 	m := NewManager()
@@ -420,18 +405,20 @@ func TestUnresponsiveConnSink(t *testing.T) {
 	payload := strings.Repeat("x", 1<<20) // 1 MiB: exhausts socket buffers fast
 	const total = 5
 	for i := range total {
-		// the caller never waits on the stalled peer: enqueue is non-blocking
-		// (bounded queue, select/default drop), the write happens on the net
-		// sink's own goroutine
+		// the sync engine pays the write inline: each call stalls on the
+		// stalled peer until the write deadline (100ms) fires, then errors
+		// into the redial path and dumps the line to stderr
 		m.GetLogger("default").Info("stall test %d %s", i, payload)
-		time.Sleep(200 * time.Millisecond) // keep the net sink queue from overflowing
+		time.Sleep(200 * time.Millisecond) // keep the dump volume readable
 	}
 	m.Close()
 
 	require.NoError(t, w.Close())
-	bs, err := io.ReadAll(r)
-	require.NoError(t, err)
+	bs := <-drained
 	assert.Contains(t, string(bs), "unable to write log message") // deadline fired
+	// "stall test" can only reach stderr via the write-failure dump: the
+	// console sink captures its copy in rec, so this proves line preservation
+	assert.Contains(t, string(bs), "stall test")
 	assert.Equal(t, total, strings.Count(rec.String(), "stall test"))
 }
 

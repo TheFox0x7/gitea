@@ -4,6 +4,7 @@
 package setting
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -60,14 +61,14 @@ func TestLogConfigDefault(t *testing.T) {
 	sinkDump := `
 {
 	"console": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:out"
 	}
 }
 `
@@ -76,6 +77,7 @@ func TestLogConfigDefault(t *testing.T) {
 	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "ssh"))
 }
 
 func TestLogConfigDisable(t *testing.T) {
@@ -83,20 +85,21 @@ func TestLogConfigDisable(t *testing.T) {
 [log]
 logger.router.MODE =
 logger.xorm.MODE =
+logger.ssh.MODE =
 `)
 	defer managerClose()
 
 	sinkDump := `
 {
 	"console": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:out"
 	}
 }
 `
@@ -105,6 +108,7 @@ logger.xorm.MODE =
 	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
 	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "router"))
 	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "xorm"))
+	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "ssh"))
 }
 
 func TestLogConfigLegacyDefault(t *testing.T) {
@@ -117,14 +121,14 @@ MODE = console
 	sinkDump := `
 {
 	"console": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:out"
 	}
 }
 `
@@ -133,15 +137,14 @@ MODE = console
 	assert.Equal(t, "{}", loggerDumpJSON(t, manager, "access"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "ssh"))
 }
 
 func TestLogConfigLegacyMode(t *testing.T) {
 	tempDir := t.TempDir()
 
-	tempPath := func(file string) string {
-		return filepath.Join(tempDir, file)
-	}
-	_ = tempPath // file names are owned by the file sink writer, not exposed by Dump
+	// file names are owned by the file sink writer; Dump exposes them via the writer key
+	writerKey := func(name string) string { return "file:" + filepath.Join(tempDir, name) }
 
 	manager, managerClose := initLoggersByConfig(t, `
 [log]
@@ -152,38 +155,39 @@ ACCESS = file
 `)
 	defer managerClose()
 
-	sinkDump := `
+	sinkDump := fmt.Sprintf(`
 {
 	"file": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "file"
+		"type": "file",
+		"writer": %q
 	}
 }
-`
-	sinkDumpAccess := `
+`, writerKey("gitea.log"))
+	sinkDumpAccess := fmt.Sprintf(`
 {
 	"file.access": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "none",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "file"
+		"type": "file",
+		"writer": %q
 	}
 }
-`
+`, writerKey("access.log"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
 	require.JSONEq(t, sinkDumpAccess, loggerDumpJSON(t, manager, "access"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "router"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
+	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "ssh"))
 }
 
 func TestLogConfigLegacyModeDisable(t *testing.T) {
@@ -220,42 +224,53 @@ STDERR = true
 	sinkDump := `
 {
 	"console": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "warn",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:out"
 	},
 	"console-1": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "logfmt",
 		"level": "error",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:err"
 	}
 }
 `
 	sinkDumpAccess := `
 {
 	"console.access": {
-		"bufferLen": 10000,
 		"colorize": false,
 		"flags": "none",
 		"format": "legacy",
 		"level": "warn",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "console"
+		"type": "console",
+		"writer": "std:out"
 	}
 }
 `
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "xorm"))
+	// ssh follows the default logger (console @ warn), not xorm's sinks
+	require.JSONEq(t, `{"console": {
+		"colorize": false,
+		"flags": "stdflags",
+		"format": "legacy",
+		"level": "warn",
+		"prefix": "",
+		"stacktraceLevel": "none",
+		"type": "console",
+		"writer": "std:out"
+	}}`, loggerDumpJSON(t, manager, "ssh"))
 	require.JSONEq(t, sinkDumpAccess, loggerDumpJSON(t, manager, "access"))
 }
 
@@ -284,29 +299,29 @@ COMPRESSION_LEVEL = 4
 `)
 	defer managerClose()
 
-	sinkDump := `
+	sinkDump := fmt.Sprintf(`
 {
 	"file": {
-		"bufferLen": 10,
 		"colorize": false,
 		"flags": "stdflags",
 		"format": "legacy",
 		"level": "info",
 		"prefix": "",
 		"stacktraceLevel": "none",
-		"type": "file"
+		"type": "file",
+		"writer": %q
 	},
 	"file1": {
-		"bufferLen": 10,
 		"colorize": false,
 		"flags": "medfile",
 		"format": "legacy",
 		"level": "error",
 		"prefix": "[Prefix] ",
 		"stacktraceLevel": "fatal",
-		"type": "file"
+		"type": "file",
+		"writer": %q
 	}
 }
-`
+`, "file:"+filepath.Join(tempDir, "gitea.log"), "file:"+filepath.Join(tempDir, "file-xxx.log"))
 	require.JSONEq(t, sinkDump, loggerDumpJSON(t, manager, "default"))
 }

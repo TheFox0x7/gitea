@@ -3,6 +3,10 @@
 
 package slog
 
+import (
+	"runtime"
+)
+
 // Package-level printf-style logging on the default logger, kept for gradual
 // migration from modules/log. Prefer Slog()-based structured logging.
 
@@ -49,7 +53,12 @@ func Critical(format string, args ...any) {
 // to stderr so an early fatal is never lost.
 // Deprecated: handle fatal errors explicitly instead.
 func Fatal(format string, args ...any) {
-	if !Default().logPrintf(1, LevelFatal, format, args, "") {
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
+	def := Default()
+	accepted := def.logPrintf(pcs[0], LevelFatal, format, args, "", 2)
+	// the bootstrap buffer accepts events but is not a sink: keep the echo
+	if !accepted || len(def.handler.Load().sinkStates()) == 0 {
 		FallbackErrorf(format, args...)
 	}
 	GetManager().Close()
