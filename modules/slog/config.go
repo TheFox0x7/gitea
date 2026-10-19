@@ -151,7 +151,7 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 				}
 				built[sc.Name] = st
 			}
-			frontends = append(frontends, newSinkFrontend(m, st))
+			frontends = append(frontends, newSinkFrontend(st))
 		}
 		trees[lc.Name] = newMultiHandler(frontends)
 	}

@@ -64,7 +64,7 @@ func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger
 	st, err := m.newSinkWithWriter(cfg, nopWriteCloser{rec})
 	require.NoError(t, err)
 	l := m.GetLogger("test")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, st)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
 	t.Cleanup(m.Close)
 	return m, l, rec
 }
@@ -120,7 +120,7 @@ func TestLevelFanout(t *testing.T) {
 	stB, err := m.newSinkWithWriter(SinkConfig{Name: "b", Type: "console", Level: LevelDebug, Flags: FlagsFromString("none")}, nopWriteCloser{recB})
 	require.NoError(t, err)
 	l := m.GetLogger("fanout")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, stA), newSinkFrontend(m, stB)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stA), newSinkFrontend(stB)}))
 
 	assert.Equal(t, LevelDebug, l.GetLevel())
 
@@ -228,30 +228,6 @@ func TestApplyValidation(t *testing.T) {
 	assert.Empty(t, m.loggers)
 }
 
-func TestPauseResume(t *testing.T) {
-	// sync engine: a paused manager stalls writers inside the write instead
-	// of buffering or dropping; Resume releases them
-	m, l, rec := newTestLogger(t, withFlags(0))
-	m.PauseAll()
-	m.PauseAll() // idempotent
-
-	done := make(chan struct{})
-	go func() {
-		l.Info("paused-blocks")
-		close(done)
-	}()
-	select {
-	case <-done:
-		t.Fatal("write returned while paused")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	m.ResumeAll()
-	m.ResumeAll() // safe without a matching Pause count
-	<-done
-	assert.Contains(t, rec.String(), "paused-blocks")
-}
-
 func TestSyncWritesNeverDrop(t *testing.T) {
 	// the sync engine has no queue to overflow: every accepted event lands
 	m, l, rec := newTestLogger(t, withFlags(0))
@@ -288,7 +264,7 @@ func TestMixedSinkFanout(t *testing.T) {
 	stJ, err := m.newSinkWithWriter(SinkConfig{Name: "json", Type: "console", Level: LevelInfo, Format: FormatJSON}, nopWriteCloser{recJ})
 	require.NoError(t, err)
 	l := m.GetLogger("mixed")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, stL), newSinkFrontend(m, stJ)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stL), newSinkFrontend(stJ)}))
 
 	l.Info("hello %s", "world")
 	m.Close()

@@ -53,18 +53,6 @@ func FlushQueues(ctx *context.PrivateContext) {
 	ctx.PlainText(http.StatusOK, "success")
 }
 
-// PauseLogging pauses logging
-func PauseLogging(ctx *context.PrivateContext) {
-	log.GetManager().PauseAll()
-	ctx.PlainText(http.StatusOK, "success")
-}
-
-// ResumeLogging resumes logging
-func ResumeLogging(ctx *context.PrivateContext) {
-	log.GetManager().ResumeAll()
-	ctx.PlainText(http.StatusOK, "success")
-}
-
 // ReleaseReopenLogging releases and reopens logging files
 func ReleaseReopenLogging(ctx *context.PrivateContext) {
 	if err := releasereopen.GetManager().ReleaseReopen(); err != nil {

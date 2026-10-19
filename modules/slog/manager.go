@@ -14,7 +14,7 @@ import (
 const DefaultName = "default"
 
 // Manager coordinates named loggers. It is intentionally thin: the logger
-// registry, the default-logger fast path, the pause gate and the shared writer
+// registry, the default-logger fast path and the shared writer
 // pool live here; sink lifecycles are provisioned by Config (see
 // Config.provision) and tracked via the logger trees.
 type Manager struct {
@@ -23,7 +23,6 @@ type Manager struct {
 
 	defaultLogger atomic.Pointer[Logger] // fast path for GetLogger(DefaultName)
 
-	pause          pauseGate
 	writers        writerPool
 	bootstrapLevel atomic.Int32 // minimum level captured before a logger is configured
 	buffer         recordBuffer
@@ -41,6 +40,11 @@ func NewManager() *Manager {
 // events replay into the real sinks on Apply.
 func (m *Manager) SetBootstrapLevel(level Level) {
 	m.bootstrapLevel.Store(int32(level))
+}
+
+// BootstrapLevel returns the capture floor set by SetBootstrapLevel.
+func (m *Manager) BootstrapLevel() Level {
+	return Level(m.bootstrapLevel.Load())
 }
 
 // GetLogger returns the logger with the given name, creating an empty one
@@ -69,17 +73,6 @@ func (m *Manager) getLoggerLocked(name string) *Logger {
 	l := newLogger(m, name)
 	m.loggers[name] = l
 	return l
-}
-
-// PauseAll pauses all sinks: each sink goroutine stops writing (and stops
-// consuming its queue) until ResumeAll.
-func (m *Manager) PauseAll() {
-	m.pause.Pause()
-}
-
-// ResumeAll resumes all sinks paused by PauseAll.
-func (m *Manager) ResumeAll() {
-	m.pause.Resume()
 }
 
 // AddHandler attaches a plain external slog.Handler to a named logger. It
@@ -122,7 +115,6 @@ func (m *Manager) Close() {
 	m.loggers = map[string]*Logger{}
 	m.defaultLogger.Store(nil)
 	m.buffer = recordBuffer{}
-	m.pause.Resume() // a Close during PauseAll must not wedge future writers
 }
 
 // flushBufferLocked replays buffered events into the loggers that now have a

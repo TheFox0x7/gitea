@@ -36,16 +36,6 @@ func (m *LoggerManager) Close() {
 	m.mgr.Close()
 }
 
-// PauseAll pauses all sinks
-func (m *LoggerManager) PauseAll() {
-	m.mgr.PauseAll()
-}
-
-// ResumeAll resumes all sinks
-func (m *LoggerManager) ResumeAll() {
-	m.mgr.ResumeAll()
-}
-
 // DumpLoggers returns a map of all loggers and their sinks, for debugging and display purposes.
 func (m *LoggerManager) DumpLoggers() map[string]any {
 	dump := m.mgr.Dump()

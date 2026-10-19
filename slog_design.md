@@ -81,7 +81,9 @@ Special integrations (all must keep working):
 - `log.LoggerToWriter` bridges the stdlib `golog` into the default logger.
 - `process.TraceCallback`, `rotatingfilewriter.ErrorPrintf`,
   `services/doctor` via `BaseLoggerToGeneralLogger`.
-- `PauseAll`/`ResumeAll` (used by `gitea dump` over the private API),
+- `PauseAll`/`ResumeAll` — **dropped** (removed 2026-10-18: never had an
+  internal consumer, no precedent in production loggers, and with synchronous
+  writes it could only stall every logging caller; see `slog_new_design.md` §6),
   flush-with-timeout on close, `DumpLoggers`/`DumpWriters` introspection.
 - Caller-side niceties: sensitive-URL masking, `LogStringer` (~53 impls),
   `ColoredValue` (fmt.Formatter-based ANSI wrapping, re-Sprintf'd per

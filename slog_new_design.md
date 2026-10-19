@@ -19,7 +19,6 @@ flowchart TB
     subgraph mgr["Manager (defaultManager)"]
         REG["loggers map[name]*Logger"]
         SINKREG["sinks owned by logger trees<br/>dedup by SinkConfig.Name within one Apply"]
-        PAUSE["pauseGate — PauseAll/ResumeAll<br/>(stalls writes while paused)"]
         POOL["writerPool — usage-counted<br/>writers keyed by target identity"]
         APPLY["Apply(Config)<br/>1. validate everything<br/>2. build all sinks fresh<br/>3. swap trees, release orphaned writers<br/>4. flush bootstrap buffer"]
         CLOSE["Close — release all writers, forget maps"]
@@ -148,16 +147,28 @@ Apply does not configure stay buffered until a later Apply configures them.
   of Caddy's `FlushTo(defaultLogger)` on error paths): a command that never
   applies a logging configuration still surfaces its buffered events, on
   stderr, gated on the default logger never having been configured.
+- **Long-lived flows must apply.** Buffering only helps if an `Apply` eventually
+  arrives in the same process. The installer is the one flow that serves for a
+  long time without any configuration existing (there is no app.ini yet, and
+  install completion restarts the process, so a buffer spill would never run):
+  `serveInstall` therefore applies an explicit console logger at the bootstrap
+  level, like every CLI command does.
 
 ## 6. Evaluation: sync vs async write path (Caddy comparison)
 
 **Decided 2026-10-18: the engine is fully synchronous** (Caddy's model). The
 per-sink queue/goroutine machinery was removed: frontends render and write
-inline, the pause gate stalls writers instead of buffering, overflow-drops no
-longer exist, and `BUFFER_LEN` is dead config. Stalls are bounded: file/console
-writes are effectively never slow, and `connWriter`'s write deadline plus
-rate-limited redial converts a stalled remote into the same error→stderr-dump
-path. The measurements that drove the decision, taken on the async engine
+inline, overflow-drops no longer exist, and `BUFFER_LEN` is dead config. Stalls
+are bounded: file/console writes are effectively never slow, and `connWriter`'s
+write deadline plus rate-limited redial converts a stalled remote into the same
+error→stderr-dump path.
+
+`PauseAll`/`ResumeAll` and the `gitea manager logging pause|resume` CLI/API
+surface were removed with the same change: the control existed to stop disk
+writes without a restart, but with synchronous writes it can only stall every
+logging caller (the access middleware alone would freeze each subsequent
+request), and it has no precedent in production loggers — journald rate-limits,
+nginx/Apache only reopen. `release-and-reopen` stays for logrotate. The measurements that drove the decision, taken on the async engine
 (before removal; kept for the record):
 
 | benchmark | ns/op (caller) |
@@ -213,9 +224,9 @@ sequenceDiagram
     L->>MH: handle(rec, hi)
     MH->>FL: handle — child level re-check passes
     FL->>FL: formatLegacy on THIS goroutine
-    FL->>FL: gateWriter → pause RLock → stdout.Write(bytes)
+    FL->>FL: stdout.Write(bytes)
     MH->>FS: handle — child level re-check
-    FS->>FS: gateWriter → JSONHandler.Handle(rec) → file.Write
+    FS->>FS: JSONHandler.Handle(rec) → file.Write
     Note over FL,FS: a failed write re-renders the line to stderr (bounded), never dropped
 ```
 
@@ -228,7 +239,7 @@ Numbered walk-through:
 5. One `slog.Record` is built for all sinks. The `hiddenInfo` side channel carries only what some sink in this tree needs: raw printf format+args for colorized legacy re-rendering, precomputed stacktrace, prefilled source.
 6. `multiHandler.handle` re-checks each child's level, so a `Debug` record costs nothing at a `Warn`-level sink.
 7. All rendering happens on the caller goroutine (the sync model, §6): legacy via `formatLegacy`, CLF via `formatCLF`, json/logfmt via the stdlib handler — no clone, no queue, no sink goroutine.
-8. Writes are pause-gated and synchronous; a failed write re-renders the line to stderr (capped) and reports the error, so an event is never silently dropped.
+8. Writes are synchronous; a failed write re-renders the line to stderr (capped) and reports the error, so an event is never silently dropped.
 
 ### 2.2 structured path — `GetLogger("x").Slog().Info("msg", "k", v)`
 
@@ -243,7 +254,7 @@ sequenceDiagram
     Note over S: stdlib captures PC itself (always)
     S->>MH: Enabled → Handle(record + attrs)
     MH->>F: Handle per enabled sink
-    F->>F: legacy → formatLegacy + key=value suffix<br/>clf → formatCLF from the record's request fields<br/>json/logfmt → stdlib handler<br/>all inline, all gated by the pauseGate
+    F->>F: legacy → formatLegacy + key=value suffix<br/>clf → formatCLF from the record's request fields<br/>json/logfmt → stdlib handler<br/>all inline on the caller goroutine
 ```
 
 Differences vs the printf path:
@@ -256,7 +267,6 @@ Differences vs the printf path:
 ### 2.3 Failure and write behavior (both paths)
 
 - Writer error → the line is re-rendered to stderr (capped at 32 KiB) with an error notice naming the sink; the sync engine never queues, so nothing is dropped silently.
-- `PauseAll`/`ResumeAll` → `pauseGate` (RWMutex): Pause holds the write lock, every write acquires the read side, Resume releases. Idempotent, and `Close` releases a held gate.
 - `Manager.Close` → releases all writers (the pool closes each on its last reference); there is nothing to drain because writes are synchronous.
 
 ## 3. Configuration: previous logger port → new one

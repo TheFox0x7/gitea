@@ -111,7 +111,7 @@ func BenchmarkLegacyFile(b *testing.B) {
 	st, err := m.newSinkWithWriter(SinkConfig{Name: "bench", Type: "file", Level: LevelInfo, Flags: FlagsFromString("stdflags")}, f)
 	require.NoError(b, err)
 	l := m.GetLogger("bench")
-	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(m, st)}))
+	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request %s took %d ms for user %d", "GET /api/v1/repos", 12, 97)

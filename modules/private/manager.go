@@ -52,20 +52,6 @@ func FlushQueues(ctx context.Context, timeout time.Duration, nonBlocking bool) R
 	return requestJSONClientMsg(req, "Flushed")
 }
 
-// PauseLogging pauses logging
-func PauseLogging(ctx context.Context) ResponseExtra {
-	reqURL := setting.LocalURL + "api/internal/manager/pause-logging"
-	req := newInternalRequestAPI(ctx, reqURL, "POST")
-	return requestJSONClientMsg(req, "Logging Paused")
-}
-
-// ResumeLogging resumes logging
-func ResumeLogging(ctx context.Context) ResponseExtra {
-	reqURL := setting.LocalURL + "api/internal/manager/resume-logging"
-	req := newInternalRequestAPI(ctx, reqURL, "POST")
-	return requestJSONClientMsg(req, "Logging Restarted")
-}
-
 // ReleaseReopenLogging releases and reopens logging files
 func ReleaseReopenLogging(ctx context.Context) ResponseExtra {
 	reqURL := setting.LocalURL + "api/internal/manager/release-and-reopen-logging"

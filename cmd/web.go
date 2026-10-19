@@ -23,6 +23,7 @@ import (
 	"gitea.dev/modules/process"
 	"gitea.dev/modules/public"
 	"gitea.dev/modules/setting"
+	"gitea.dev/modules/slog"
 	"gitea.dev/modules/templates"
 	"gitea.dev/modules/util"
 	"gitea.dev/routers"
@@ -134,6 +135,12 @@ func showWebStartupMessage(msg string) {
 }
 
 func serveInstall(cmd *cli.Command) error {
+	// The installer runs before any configuration exists, so no Apply will
+	// happen while it serves: without this explicit console logger every
+	// install-time event would only land in the bootstrap buffer and never be
+	// shown. Respect the CLI's bootstrap level (--quiet/--debug).
+	setupConsoleLogger(slog.GetManager().BootstrapLevel(), slog.CanColorStderr, os.Stderr)
+
 	showWebStartupMessage("Prepare to run install page")
 
 	routers.InitWebInstallPage(graceful.GetManager().HammerContext())

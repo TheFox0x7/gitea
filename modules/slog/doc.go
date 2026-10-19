@@ -11,13 +11,13 @@
 // --quiet/--debug, and spills the buffer to stderr when a command finishes
 // without ever applying a logging configuration. A Fatal event is echoed to
 // stderr when no sink accepted it, so early failures are never lost. Writes
-// are synchronous: a paused manager stalls writers until Resume, and a
-// failing sink surfaces its line on stderr rather than dropping it.
+// are synchronous: a failing sink surfaces its line on stderr rather than
+// dropping it.
 //
 // Architecture (see slog_design.md):
 //
 //	Logger (facade) → multiHandler (OR-Enabled fan-out) → sink frontends →
-//	inline, pause-gated writes to the shared writer (Caddy's model: no queues,
+//	inline writes to the shared writer (Caddy's model: no queues,
 //	no sink goroutines, no drops).
 //
 // Writers are opened through a usage-counted pool keyed by target identity

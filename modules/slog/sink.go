@@ -45,7 +45,7 @@ type sinkState struct {
 	stacktraceLevel Level
 	addSource       bool
 
-	writer io.WriteCloser // the raw writer; frontends wrap it in the pause gate
+	writer io.WriteCloser // the raw writer, shared through the pool
 
 	release func() // drops this sink's writer reference; the last one closes it
 }
@@ -103,15 +103,13 @@ func (st *sinkState) wantsRawArgs() bool {
 }
 
 // sinkFrontend is the per-tree slog.Handler face of a sink. Writes happen
-// inline on the caller goroutine through the pause-gated writer; on a write
+// inline on the caller goroutine; on a write
 // error the formatted line is dumped to stderr so no event is silently lost.
 type sinkFrontend struct {
 	st *sinkState
 
-	pause *pauseGate
-
 	opts *slog.HandlerOptions
-	// writer is st.writer gated by the pause gate; inner renders stdlib
+	// writer is st.writer; inner renders stdlib
 	// formats (JSON/logfmt) straight into it
 	writer io.Writer
 	inner  slog.Handler
@@ -125,13 +123,12 @@ type sinkFrontend struct {
 
 var _ slog.Handler = (*sinkFrontend)(nil)
 
-func newSinkFrontend(m *Manager, st *sinkState) *sinkFrontend {
+func newSinkFrontend(st *sinkState) *sinkFrontend {
 	f := &sinkFrontend{
-		st:    st,
-		pause: &m.pause,
-		opts:  &slog.HandlerOptions{AddSource: st.addSource, ReplaceAttr: renameFatalLevel},
+		st:   st,
+		opts: &slog.HandlerOptions{AddSource: st.addSource, ReplaceAttr: renameFatalLevel},
 	}
-	f.writer = &gateWriter{w: st.writer, pause: &m.pause}
+	f.writer = st.writer
 	switch st.format {
 	case FormatJSON:
 		f.inner = slog.NewJSONHandler(f.writer, f.opts)

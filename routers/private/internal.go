@@ -90,8 +90,6 @@ func Routes() *web.Router {
 	r.Post("/manager/restart", Restart)
 	r.Post("/manager/reload-templates", ReloadTemplates)
 	r.Post("/manager/flush-queues", bind(private.FlushOptions{}), FlushQueues)
-	r.Post("/manager/pause-logging", PauseLogging)
-	r.Post("/manager/resume-logging", ResumeLogging)
 	r.Post("/manager/release-and-reopen-logging", ReleaseReopenLogging)
 	r.Post("/manager/set-log-sql", SetLogSQL)
 	r.Get("/manager/processes", Processes)
