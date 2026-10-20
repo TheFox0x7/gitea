@@ -17,7 +17,7 @@ func FallbackErrorf(format string, args ...any) {
 
 // Deprecated: use slog.GetLevel.
 func GetLevel() Level {
-	return slog.Default().GetLevel()
+	return slog.DefaultPrintfLogger().GetLevel()
 }
 
 // Deprecated: use slog.Log.
@@ -26,7 +26,7 @@ func GetLevel() Level {
 func Log(skip int, level Level, format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(skip+2, pcs[:]) // 0=Callers, 1=this fn, 2=caller
-	slog.Default().LogWithCallerPC(pcs[0], level, "", skip+3, format, v...)
+	slog.DefaultPrintfLogger().LogWithCallerPC(pcs[0], level, "", skip+3, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelTrace.
@@ -35,7 +35,7 @@ func Log(skip int, level Level, format string, v ...any) {
 func Trace(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller
-	slog.Default().LogPC(pcs[0], TRACE, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], TRACE, 5, format, v...)
 }
 
 // Deprecated: use slog.GetLogger(...).LevelEnabled(slog.LevelTrace).
@@ -49,7 +49,7 @@ func IsTrace() bool {
 func Debug(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], DEBUG, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], DEBUG, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelInfo.
@@ -58,7 +58,7 @@ func Debug(format string, v ...any) {
 func Info(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], INFO, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], INFO, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelWarn.
@@ -67,7 +67,7 @@ func Info(format string, v ...any) {
 func Warn(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], WARN, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], WARN, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelError.
@@ -76,7 +76,7 @@ func Warn(format string, v ...any) {
 func Error(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], ERROR, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], ERROR, 5, format, v...)
 }
 
 // Deprecated: use slog.Log with slog.LevelError and an explicit skip.
@@ -85,7 +85,7 @@ func Error(format string, v ...any) {
 func ErrorWithSkip(skip int, format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], ERROR, 5+skip, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], ERROR, 5+skip, format, v...)
 }
 
 var OsExiter = os.Exit
@@ -97,7 +97,7 @@ var OsExiter = os.Exit
 func Fatal(format string, v ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
-	slog.Default().LogPC(pcs[0], FATAL, 5, format, v...)
+	slog.DefaultPrintfLogger().LogPC(pcs[0], FATAL, 5, format, v...)
 	GetManager().Close()
 	OsExiter(1)
 }

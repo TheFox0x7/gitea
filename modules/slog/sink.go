@@ -103,14 +103,14 @@ func (st *sinkState) wantsRawArgs() bool {
 }
 
 // sinkFrontend is the per-tree slog.Handler face of a sink. Writes happen
-// inline on the caller goroutine; on a write
-// error the formatted line is dumped to stderr so no event is silently lost.
+// inline on the caller goroutine; on a write error the formatted line is
+// dumped to stderr so no event is silently lost.
 type sinkFrontend struct {
 	st *sinkState
 
 	opts *slog.HandlerOptions
-	// writer is st.writer; inner renders stdlib
-	// formats (JSON/logfmt) straight into it
+	// writer is st.writer; inner renders stdlib formats (JSON/logfmt)
+	// straight into it
 	writer io.Writer
 	inner  slog.Handler
 	// shapers replay this frontend's With-state onto a fresh handler, used to

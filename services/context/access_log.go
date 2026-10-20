@@ -89,7 +89,7 @@ func (lr *accessLogRecorder) record(start time.Time, respWriter ResponseWriter, 
 
 func newAccessLogRecorder() *accessLogRecorder {
 	return &accessLogRecorder{
-		logger:        slog.GetLogger("access").Slog(),
+		logger:        slog.GetLogger("access"),
 		needRequestID: len(setting.Log.RequestIDHeaders) > 0,
 	}
 }

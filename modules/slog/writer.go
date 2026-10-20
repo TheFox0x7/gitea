@@ -92,12 +92,12 @@ func newConnWriterOpener(cfg SinkConfig) connWriterOpener {
 		writeTimeout = 60 * time.Second
 	}
 	return connWriterOpener{opts: ConnSinkOptions{
-		Addr:           opt.Addr,
-		Protocol:       protocol,
-		Reconnect:      opt.Reconnect,
-		ReconnectOnMsg: opt.ReconnectOnMsg,
-		DialTimeout:    dialTimeout,
-		WriteTimeout:   writeTimeout,
+		Addr:         opt.Addr,
+		Protocol:     protocol,
+		DialTimeout:  dialTimeout,
+		WriteTimeout: writeTimeout,
+		// Reconnect/ReconnectOnMsg are intentionally not carried over: they are
+		// ignored no-ops and must not count as divergent writer settings.
 	}}
 }
 
@@ -150,8 +150,8 @@ func sinkWriterOpener(cfg SinkConfig) WriterOpener {
 
 // writerPool is a usage-counted registry of open writers keyed by target
 // identity (the port of Caddy's WriterKey/UsagePool pair). Sinks acquire on
-// build and release after their backend has fully stopped; the writer closes
-// when the last reference drops.
+// build and release when they leave every logger tree; the writer closes when
+// the last reference drops.
 type writerPool struct {
 	mu      sync.Mutex
 	writers map[string]*pooledWriter
@@ -175,8 +175,8 @@ func writerRepr(op WriterOpener) string {
 }
 
 // acquire returns the writer for op's target, opening it on first use. The
-// returned release func must be called exactly once, after the sink backend
-// has stopped. A second sink targeting an open writer keeps the existing
+// returned release func must be called exactly once, when the sink is no longer
+// reachable from any tree. A second sink targeting an open writer keeps the existing
 // settings; divergence from its own config is reported once.
 func (p *writerPool) acquire(op WriterOpener) (io.WriteCloser, func(), error) {
 	key, repr := op.WriterKey(), writerRepr(op)

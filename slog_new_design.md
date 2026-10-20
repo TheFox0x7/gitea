@@ -11,9 +11,9 @@
 ```mermaid
 flowchart TB
     subgraph api["public API (printf surface unchanged, 587 importing files)"]
-        PKG["package fns: Trace/Info/Warn/Error/Critical/Fatal/Log → 'default' logger"]
+        PKG["modules/log shim: Trace/Info/Warn/Error/Critical/Fatal → printf view of 'default'"]
         GETL["GetLogger(name) → *Logger"]
-        SL["Logger.Slog() → *slog.Logger (cached, carries a logger=name attr)"]
+        SL["GetLogger(name) → *slog.Logger (stdlib; stable across Apply, logger=name attr)"]
     end
 
     subgraph mgr["Manager (defaultManager)"]
@@ -154,6 +154,21 @@ Apply does not configure stay buffered until a later Apply configures them.
   `serveInstall` therefore applies an explicit console logger at the bootstrap
   level, like every CLI command does.
 
+### 1.5 Public API
+
+- `GetLogger(name)` / `Default()` return a **stdlib `*slog.Logger`**. Its handler
+  is a `dynamicHandler` over the logger's atomic tree pointer: the value is
+  stable for the process lifetime, follows every `Apply`, replays `With`/
+  `WithGroup` state per tree generation, and can be stored in package vars or
+  passed to downstream libraries that accept `*slog.Logger` (or `Handler()` for
+  handler-taking libraries).
+- The printf API exists only on the transitional **`PrintfLogger` view** used by
+  the `modules/log` shim (`GetPrintfLogger(name).LogPC(...)`); its package-level
+  forwarders capture the caller PC themselves. `modules/slog/global.go` (the
+  printf package functions) is deleted — the shim owns those names.
+- `Fatal` (echo + Close + exit) also lives on the transitional path; stdlib
+  logging leaves process exit to the caller by design.
+
 ## 6. Evaluation: sync vs async write path (Caddy comparison)
 
 **Decided 2026-10-18: the engine is fully synchronous** (Caddy's model). The
@@ -232,7 +247,7 @@ sequenceDiagram
 
 Numbered walk-through:
 
-1. Package fn adds one skip level: `log.Error` → `Log(1,...)` → `Default().Log(skip+1)` — identical skip arithmetic to old `logger_global.go`.
+1. The shim captures the caller PC itself (`shimPC()`, `//go:noinline`) and calls `slog.DefaultPrintfLogger().LogPC(pc, …)` — no skip arithmetic through wrappers, same PC-passing discipline as before.
 2. Level gate: `multiHandler.Enabled` walks children, each a single `LevelVar` atomic compare. Old code did one `atomic.Int32` compare; the new gate is a short loop of atomics (a few ns, see parity notes §4.2).
 3. `PC` capture is conditional — the tree's `needsSource` hint means `flags=none`/CLF sinks (access log) skip `runtime.Callers` entirely; old code ran `runtime.Caller` on every event.
 4. Arg resolution happens on the caller goroutine: `protectSensitiveInfo` on string args, `LogStringer` → `fmt.Formatter`, `ColoredValue` passed through untouched.
@@ -241,7 +256,7 @@ Numbered walk-through:
 7. All rendering happens on the caller goroutine (the sync model, §6): legacy via `formatLegacy`, CLF via `formatCLF`, json/logfmt via the stdlib handler — no clone, no queue, no sink goroutine.
 8. Writes are synchronous; a failed write re-renders the line to stderr (capped) and reports the error, so an event is never silently dropped.
 
-### 2.2 structured path — `GetLogger("x").Slog().Info("msg", "k", v)`
+### 2.2 structured path — `GetLogger("x").Info("msg", "k", v)`
 
 ```mermaid
 sequenceDiagram
@@ -261,7 +276,7 @@ Differences vs the printf path:
 
 - No hidden info is ever attached: no masking, no `LogStringer` resolution, no stacktrace rendering on this path (parity notes §2 item on masking applies here).
 - PC is captured unconditionally by the stdlib `Logger` (the `needsSource` hint is a printf-path optimization only).
-- `Fatal` on this path is just a level — process exit stays the facade's job (`Logger.Fatal` / package `Fatal`).
+- `Fatal` on this path is just a level — process exit stays the shim's job (`log.Fatal`).
 - The access logger emits on this path: one structured record per request (method, path, proto, status, size, duration_ms, identity, referer, user_agent, optional request_id); the sink's `FORMAT` decides the shape, `clf` rendering the Apache combined line.
 
 ### 2.3 Failure and write behavior (both paths)
@@ -329,7 +344,7 @@ Differences vs the printf path:
 
 | Adapter (old) | Port | Verdict |
 |---|---|---|
-| `LoggerToWriter(GetLogger(DEFAULT).Info)` — golog bridge (setting/log.go:200, cmd/doctor.go:103,175) | `golog.SetOutput(bridge)` where bridge is a ~10-line `io.Writer` over `slog.NewLogLogger(l.Slog().Handler(), LevelInfo)` — stdlib `*log.Logger` exposes `Output(calldepth, s)`, not `Write`, so it needs the adapter (implemented in `modules/setting/log_slog.go`). Strictly better: PC now points at the real `golog` caller instead of `loggerToWriter.Write`; output still non-blocking (legacy frontend formats eagerly, stdlib frontends enqueue). Caveats: message keeps golog's trailing `\n` (legacy strips one; json/logfmt will embed it in `msg`); no `protectSensitiveInfo` on this path (old masked via the printf path — negligible: only fires when the entire written line parses as an http URL). Keep `golog.SetFlags(0)`/`SetPrefix("")` as today. |
+| `LoggerToWriter(GetLogger(DEFAULT).Info)` — golog bridge (setting/log.go:200, cmd/doctor.go:103,175) | `golog.SetOutput(bridge)` where bridge is a ~10-line `io.Writer` over `slog.NewLogLogger(l.Handler(), LevelInfo)` — stdlib `*log.Logger` exposes `Output(calldepth, s)`, not `Write`, so it needs the adapter (implemented in `modules/setting/log_slog.go`). Strictly better: PC now points at the real `golog` caller instead of `loggerToWriter.Write`; output still non-blocking (legacy frontend formats eagerly, stdlib frontends enqueue). Caveats: message keeps golog's trailing `\n` (legacy strips one; json/logfmt will embed it in `msg`); no `protectSensitiveInfo` on this path (old masked via the printf path — negligible: only fires when the entire written line parses as an http URL). Keep `golog.SetFlags(0)`/`SetPrefix("")` as today. |
 | `PrintfLogger` (misc.go:59) | drop | No non-test callers. Wherever an `io.Writer`-ish shim is needed, `NewLogLogger` covers it. |
 | `BaseLoggerToGeneralLogger` + `baseToLogger` (misc.go:15) | mostly delete | `NewLogLogger` doesn't apply (`BaseLogger` is a printf interface, not an `io.Writer`). But the new `*Logger` already *is* the general logger (`Log/GetLevel/LevelEnabled/Trace..Fatal`), so doctor can target it or a ~10-line shim for `Base`-implementors like `doctorCheckLogger`; the `*Event` parameter disappears from the shim signature. |
 | `ErrorWithSkip` (logger_global.go:49) | 2-line package fn on `Default().Log` | Keep; explicit skip plumbing is inherently custom. |
@@ -342,7 +357,7 @@ Differences vs the printf path:
 Audited 2026-10-11 against a future services-based, no-globals application refactor.
 Verdict: **the core is already DI-ready** — `Manager` is a self-contained injectable
 object (all state instance-scoped behind `m.mu`/atomics; every test constructs its own),
-and services can depend on `*slog.Logger` — a stdlib type — via `Logger.Slog()`, making
+and services can depend on `*slog.Logger` — a stdlib type — returned directly by `GetLogger`, making
 `slog.Handler` the port and this module the adapter. The only intra-repo dependency is
 `rotatingfilewriter` (file-sink opener in `writer.go`), one-directional.
 
@@ -351,7 +366,7 @@ and services can depend on `*slog.Logger` — a stdlib type — via `Logger.Slog
 | Global | Disposition |
 |---|---|
 | `defaultManager` + `GetManager`/`GetLogger`/`Default` (manager.go:140-153) | Quarantined; deleted when call sites inject a manager/logger at the composition root (migration plan final step) |
-| `global.go` printf functions | Deprecated; deleted at the end of the migration anyway |
+| `global.go` printf functions | Deleted: unused; the shim has its own package-level functions |
 | `OsExiter = os.Exit` (internal.go:32) | Dies with the deprecated `Fatal` — in hexagonal, exiting is the caller's decision; or folds into `Manager` if `Fatal` survives |
 | `CanColorStdout`/`CanColorStderr` (color_console.go) | The real mutable globals: env-derived, written by the setting layer. Move into `Config` at load time — composition root detects color support once, passes explicit `Colorize` |
 | `projectPackagePrefix`, `levelNames`, `flagFromString`, … | Immutable lookup tables / init-computed constants — no action |
@@ -397,7 +412,7 @@ Examined 2026-10-18 against Caddy's access-log emitter (`modules/caddyhttp/serve
 | **Field vocabulary** (`user_id`, `uri`, `remote_ip`/`remote_port`) | **Noted for the access rewrite** — the structured access shape is unreleased, so the vocabulary is still free to choose |
 | **Timestamp/duration configurability** (`ts` epoch seconds vs ISO vs custom/local; duration s/ms/ns/string) | **Adoptable** — compile per-sink options into `HandlerOptions.ReplaceAttr`; keep `duration_ms` as the access unit (self-describing) |
 | **Key renaming** (`message_key`, `time_key`, `level_key`, …) | **Adoptable** — same ReplaceAttr mechanism; `@timestamp`/`severity` are what ELK/GCP expect |
-| **Caller / stacktrace for structured formats** (`with_caller`, `with_stacktrace`) | **DONE** — `WITH_CALLER` wires `AddSource`; `STACKTRACE_LEVEL` now captures once per event for every format and json/logfmt emit a zap-style `stacktrace` string field (the `Slog()` path gets it via a stack-injecting handler). Legacy keeps its historical rendering |
+| **Caller / stacktrace for structured formats** (`with_caller`, `with_stacktrace`) | **DONE** — `WITH_CALLER` wires `AddSource`; `STACKTRACE_LEVEL` now captures once per event for every format and json/logfmt emit a zap-style `stacktrace` string field (the stdlib path gets it via the dynamic handler). Legacy keeps its historical rendering |
 | **Header capture with credential redaction** | **Skipped** — privacy-by-default beats opt-in disclosure for Gitea |
 | **`bytes_read`, TLS state, `host`** | **Skipped** — multi-tenant/security-audit concerns; the reverse proxy owns them |
 | **`WithLazy` deferred encoding** | n/a — the sync engine renders at write time |

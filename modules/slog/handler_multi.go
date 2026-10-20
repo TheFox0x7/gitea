@@ -32,7 +32,7 @@ type multiHandler struct {
 	wantsRawArgs         bool
 	needsMessage         bool  // some sink renders Record.Message (not colorized legacy)
 	stacktraceLevel      Level // minimum StacktraceLevel over all sinks; LevelNone if none
-	structuredStackLevel Level // minimum StacktraceLevel over json/logfmt sinks, for the Slog() path
+	structuredStackLevel Level // minimum StacktraceLevel over json/logfmt sinks, for the stdlib path
 	level                Level // lowest sink level, for GetLevel; LevelNone if no sinks
 	buffering            bool  // some child is a bootstrap bufferChild
 }
@@ -126,14 +126,6 @@ func (h *multiHandler) sinkStates() []*sinkState {
 		sts = append(sts, f.states()...)
 	}
 	return sts
-}
-
-func (h *multiHandler) sinkNames() []string {
-	var names []string
-	for _, st := range h.sinkStates() {
-		names = append(names, st.name)
-	}
-	return names
 }
 
 func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

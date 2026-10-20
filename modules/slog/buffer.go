@@ -66,7 +66,7 @@ func (b *recordBuffer) restore(entries []bufferedRecord) {
 // early startup logs replay into the real sinks instead of being lost. The
 // buffer is not a sink: it never counts as "accepted" for the Fatal echo.
 type bufferChild struct {
-	l      *Logger
+	l      *logger
 	attrs  []slog.Attr
 	groups []string
 }
@@ -88,7 +88,15 @@ func (c bufferChild) handle(r slog.Record, hi *hiddenInfo) {
 	if !c.enabled(r.Level) {
 		return
 	}
-	c.l.mgr.buffer.add(bufferedRecord{loggerName: c.l.name, rec: r.Clone(), hi: hi})
+	// attrs/groups are tree-level With-state (a handler-derived tree fork);
+	// stdlib With-state rides the record instead, so this is empty there
+	c.l.mgr.buffer.add(bufferedRecord{
+		loggerName: c.l.name,
+		rec:        r.Clone(),
+		hi:         hi,
+		attrs:      c.attrs,
+		groups:     c.groups,
+	})
 }
 
 func (c bufferChild) WithAttrs(attrs []slog.Attr) slog.Handler { return c.cloneWithAttrs(attrs) }

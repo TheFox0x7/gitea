@@ -23,7 +23,7 @@ func init() {
 }
 
 // FallbackErrorf is the last-resort output when the logging system itself fails
-// (e.g. a sink queue is full or its writer errors).
+// (e.g. its writer errors).
 func FallbackErrorf(format string, args ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
 }

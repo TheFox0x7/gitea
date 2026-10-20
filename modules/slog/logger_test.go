@@ -53,7 +53,7 @@ func (r *testRecorder) String() string {
 
 // newTestLogger builds a logger with one buffer sink; mutate adjusts the sink
 // config before creation. All output is deterministic after m.Close().
-func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger, *testRecorder) {
+func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *logger, *testRecorder) {
 	t.Helper()
 	m := NewManager()
 	rec := &testRecorder{}
@@ -63,7 +63,7 @@ func newTestLogger(t *testing.T, mutate ...func(*SinkConfig)) (*Manager, *Logger
 	}
 	st, err := m.newSinkWithWriter(cfg, nopWriteCloser{rec})
 	require.NoError(t, err)
-	l := m.GetLogger("test")
+	l := m.getLogger("test")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
 	t.Cleanup(m.Close)
 	return m, l, rec
@@ -119,7 +119,7 @@ func TestLevelFanout(t *testing.T) {
 	require.NoError(t, err)
 	stB, err := m.newSinkWithWriter(SinkConfig{Name: "b", Type: "console", Level: LevelDebug, Flags: FlagsFromString("none")}, nopWriteCloser{recB})
 	require.NoError(t, err)
-	l := m.GetLogger("fanout")
+	l := m.getLogger("fanout")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stA), newSinkFrontend(stB)}))
 
 	assert.Equal(t, LevelDebug, l.GetLevel())
@@ -141,14 +141,14 @@ func TestPrintfCaller(t *testing.T) {
 	assert.Regexp(t, `modules/slog/logger_test.go:\w+:genericFunc\(\) from genericFunc: 123`, rec.String())
 }
 
-func genericFunc[T any](l *Logger, v T) {
+func genericFunc[T any](l *logger, v T) {
 	l.Info("from genericFunc: %v", v)
 }
 
 func TestStructuredJSON(t *testing.T) {
 	m, l, rec := newTestLogger(t, func(c *SinkConfig) { c.Format = FormatJSON })
 
-	l.Slog().Info("hello", "k", "v")
+	l.stdLogger().Info("hello", "k", "v")
 	l.Warn("num %d", 42)
 	m.Close()
 
@@ -187,8 +187,8 @@ func TestSharedSink(t *testing.T) {
 	}}, map[string]io.WriteCloser{"shared": rec}))
 	assert.Len(t, m.Dump()["sinks"], 1)
 
-	m.GetLogger("one").Info("from one")
-	m.GetLogger("two").Info("from two")
+	m.getLogger("one").Info("from one")
+	m.getLogger("two").Info("from two")
 	m.Close()
 	assert.Equal(t, "from one\nfrom two\n", rec.String())
 }
@@ -204,12 +204,12 @@ func TestApplyReplacesSinks(t *testing.T) {
 		}}}
 	}
 	require.NoError(t, m.apply(sinks(LevelInfo), map[string]io.WriteCloser{"s": rec1}))
-	m.GetLogger("default").Info("first")
+	m.getLogger("default").Info("first")
 
 	// re-apply rebuilds the sink fresh: the new level wins and the old backend stops
 	require.NoError(t, m.apply(sinks(LevelWarn), map[string]io.WriteCloser{"s": rec2}))
-	m.GetLogger("default").Info("dropped")
-	m.GetLogger("default").Warn("kept")
+	m.getLogger("default").Info("dropped")
+	m.getLogger("default").Warn("kept")
 	m.Close()
 
 	assert.Equal(t, "first\n", rec1.String())
@@ -263,7 +263,7 @@ func TestMixedSinkFanout(t *testing.T) {
 	require.NoError(t, err)
 	stJ, err := m.newSinkWithWriter(SinkConfig{Name: "json", Type: "console", Level: LevelInfo, Format: FormatJSON}, nopWriteCloser{recJ})
 	require.NoError(t, err)
-	l := m.GetLogger("mixed")
+	l := m.getLogger("mixed")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(stL), newSinkFrontend(stJ)}))
 
 	l.Info("hello %s", "world")
@@ -286,7 +286,7 @@ func TestFatalEarlyFallback(t *testing.T) {
 
 	// early: no sinks applied — the message must be echoed to stderr
 	m := NewManager()
-	m.GetLogger("early").Fatal("boom %d", 42)
+	m.getLogger("early").Fatal("boom %d", 42)
 	m.Close()
 
 	// late: a sink accepted the event — no stderr echo
@@ -313,6 +313,7 @@ func TestStacktraceLevel(t *testing.T) {
 	// with source line (Stack() format: "file:line (0x…)\n\tfunc: source")
 	assert.Contains(t, rec.String(), "no stack here\nstack here\n\t")
 	assert.Contains(t, rec.String(), "TestStacktraceLevel: l.Error(\"stack here\")")
+	assert.NotContains(t, rec.String(), "modules/slog/logger.go:") // no entry-method frame
 }
 
 func TestColorizedZeroArg(t *testing.T) {
@@ -383,7 +384,7 @@ func TestUnresponsiveConnSink(t *testing.T) {
 		// the sync engine pays the write inline: each call stalls on the
 		// stalled peer until the write deadline (100ms) fires, then errors
 		// into the redial path and dumps the line to stderr
-		m.GetLogger("default").Info("stall test %d %s", i, payload)
+		m.getLogger("default").Info("stall test %d %s", i, payload)
 		time.Sleep(200 * time.Millisecond) // keep the dump volume readable
 	}
 	m.Close()
@@ -399,21 +400,54 @@ func TestUnresponsiveConnSink(t *testing.T) {
 
 func TestSlogReconfigure(t *testing.T) {
 	m, l, rec := newTestLogger(t, withFlags(0))
-	l.Slog().Info("before")
+	// hold the stdlib logger across the reconfiguration: the dynamic handler
+	// follows the swapped tree, so it stays valid
+	sl := l.stdLogger()
+	sl.Info("before")
 
 	rec2 := &testRecorder{}
 	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{
 		{Name: "test", Sinks: []SinkConfig{{Name: "test2", Type: "console", Flags: FlagsFromString("none")}}},
 	}}, map[string]io.WriteCloser{"test2": rec2}))
 
-	l.Slog().Info("after") // a re-fetched Slog() follows the swapped tree
-	l.Info("after2")       // the printf path resolves the handler per call
+	sl.Info("after") // the held logger follows the swapped tree
+	l.Info("after2") // the printf path resolves the handler per call
 	m.Close()
 
 	assert.Contains(t, rec2.String(), "after")
 	assert.Contains(t, rec2.String(), "after2")
 	assert.Contains(t, rec.String(), "before")
 	assert.NotContains(t, rec2.String(), "before")
+}
+
+func TestSlogHeldLoggerAcrossApply(t *testing.T) {
+	m := NewManager()
+	t.Cleanup(m.Close)
+	rec1, rec2 := &testRecorder{}, &testRecorder{}
+	cfg := func(sink string) Config {
+		return Config{Loggers: []LoggerConfig{{
+			Name:  DefaultName,
+			Sinks: []SinkConfig{{Name: sink, Type: "console", Format: FormatJSON}},
+		}}}
+	}
+	require.NoError(t, m.apply(cfg("s1"), map[string]io.WriteCloser{"s1": rec1}))
+
+	held := m.GetLogger(DefaultName)      // held across Apply
+	derived := held.With("scope", "test") // derived handler must survive too
+	held.Info("first")
+	derived.Info("with attrs")
+
+	require.NoError(t, m.apply(cfg("s2"), map[string]io.WriteCloser{"s2": rec2}))
+	held.Info("second")
+	derived.Info("with attrs again")
+	m.Close()
+
+	assert.Contains(t, rec1.String(), "first")
+	assert.Contains(t, rec1.String(), "with attrs")
+	assert.NotContains(t, rec1.String(), "second")
+	assert.Contains(t, rec2.String(), "second")
+	assert.Contains(t, rec2.String(), "with attrs again")
+	assert.Contains(t, rec2.String(), `"scope":"test"`) // With-state replayed onto the new tree
 }
 
 type testLogString struct {
@@ -463,8 +497,9 @@ func TestStructuredStacktracePrintf(t *testing.T) {
 	require.Len(t, lines, 2)
 	assert.NotContains(t, lines[0], "stacktrace")
 	assert.Contains(t, lines[1], `"stacktrace":`)
-	// zap-style frames: the caller's function name on the first line
-	assert.Contains(t, lines[1], "TestStructuredStacktracePrintf")
+	// zap-style frames: the FIRST frame is the caller of the logging call
+	assert.Contains(t, lines[1], `"stacktrace":"gitea.dev/modules/slog.TestStructuredStacktracePrintf\n`)
+	assert.NotContains(t, lines[1], "modules/slog/logger.go:") // no entry-method frame
 }
 
 func TestStructuredStacktraceSlog(t *testing.T) {
@@ -472,16 +507,17 @@ func TestStructuredStacktraceSlog(t *testing.T) {
 		c.Format = FormatJSON
 		c.StacktraceLevel = LevelError
 	})
-	l.Slog().Warn("no stack")
-	l.Slog().Error("stack here")
+	l.stdLogger().Warn("no stack")
+	l.stdLogger().Error("stack here")
 	m.Close()
 
 	lines := strings.Split(strings.TrimSpace(rec.String()), "\n")
 	require.Len(t, lines, 2)
 	assert.NotContains(t, lines[0], "stacktrace")
 	assert.Contains(t, lines[1], `"stacktrace":`)
-	assert.Contains(t, lines[1], "TestStructuredStacktraceSlog")
-	assert.NotContains(t, lines[1], "log/slog.log")
+	// the FIRST frame is the caller: no stdlib entry-method frame leaks in
+	assert.Contains(t, lines[1], `"stacktrace":"gitea.dev/modules/slog.TestStructuredStacktraceSlog\n`)
+	assert.NotContains(t, lines[1], "log/slog.")
 }
 
 func TestAddSource(t *testing.T) {
@@ -493,4 +529,11 @@ func TestAddSource(t *testing.T) {
 	m.Close()
 	assert.Contains(t, rec.String(), `"source":{"function":`)
 	assert.Contains(t, rec.String(), "TestAddSource")
+}
+
+func TestStackSkip(t *testing.T) {
+	s := Stack(0)
+	assert.Contains(t, s, "TestStackSkip")
+	// skip 0 starts at the caller: Stack's own frame must not be included
+	assert.NotContains(t, s, "formatLegacyStack: return")
 }

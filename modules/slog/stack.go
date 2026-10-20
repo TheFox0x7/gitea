@@ -5,9 +5,7 @@ package slog
 
 import (
 	"bytes"
-	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
@@ -90,35 +88,6 @@ func formatStackFrames(pcs []uintptr) string {
 		b.WriteString(strconv.Itoa(frame.Line))
 	}
 	return b.String()
-}
-
-// stackHandler injects a "stacktrace" attr for the Slog() path: the stdlib has
-// no stack mechanism, and Handle runs on the caller goroutine, so the captured
-// stack is still the caller's.
-type stackHandler struct {
-	inner slog.Handler
-	level Level
-}
-
-var _ slog.Handler = (*stackHandler)(nil)
-
-func (h *stackHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.inner.Enabled(ctx, level)
-}
-
-func (h *stackHandler) Handle(ctx context.Context, r slog.Record) error {
-	if r.Level >= h.level {
-		r.AddAttrs(slog.String("stacktrace", formatStackFrames(captureStack(3))))
-	}
-	return h.inner.Handle(ctx, r)
-}
-
-func (h *stackHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &stackHandler{inner: h.inner.WithAttrs(attrs), level: h.level}
-}
-
-func (h *stackHandler) WithGroup(name string) slog.Handler {
-	return &stackHandler{inner: h.inner.WithGroup(name), level: h.level}
 }
 
 // shortFunctionName strips the package path and keeps the last two elements,

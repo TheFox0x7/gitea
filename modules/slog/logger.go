@@ -12,78 +12,120 @@ import (
 	"time"
 )
 
-// Logger is a named logger: a facade over a *slog.Logger with a per-name
-// handler tree that can be swapped by the Manager on reconfiguration.
-type Logger struct {
+// logger is the internal named-logger state: the swappable handler tree plus
+// the stable stdlib logger handed to callers (see dynamicHandler). It is not
+// exposed: GetLogger returns the stdlib logger directly.
+type logger struct {
 	mgr  *Manager
 	name string
 
 	handler atomic.Pointer[multiHandler]
-	slogger atomic.Pointer[slog.Logger]
+
+	std atomic.Pointer[slog.Logger]
 
 	configured atomic.Bool // false until an Apply gives this logger real sinks
 }
 
-func newLogger(mgr *Manager, name string) *Logger {
-	l := &Logger{mgr: mgr, name: name}
+func newLogger(mgr *Manager, name string) *logger {
+	l := &logger{mgr: mgr, name: name}
 	l.handler.Store(newMultiHandlerChildren([]child{bufferChild{l: l}}))
+	l.std.Store(slog.New(&dynamicHandler{l: l}).With(slog.String("logger", name)))
 	return l
 }
 
-func (l *Logger) Name() string {
-	return l.name
+func (l *logger) stdLogger() *slog.Logger {
+	return l.std.Load()
 }
 
-// Slog returns this logger as a *slog.Logger for structured, context-aware
-// logging. It carries a "logger" attr with the logger's name. Re-fetch it
-// after a reconfiguration: a previously returned value stays bound to the
-// handler tree it was created with.
-func (l *Logger) Slog() *slog.Logger {
-	if sl := l.slogger.Load(); sl != nil {
-		return sl
-	}
-	sl := newSlogLogger(l.handler.Load(), l.name)
-	// only fill an empty slot: swapHandler always stores a fresh pair, so a
-	// winning CAS here can never cache a stale handler
-	l.slogger.CompareAndSwap(nil, sl)
-	return l.slogger.Load()
-}
-
-// newSlogLogger wraps the tree with the stack injector when a structured sink
-// configured a stacktrace level (the stdlib has no stack mechanism).
-func newSlogLogger(h *multiHandler, name string) *slog.Logger {
-	var handler slog.Handler = h
-	if h.structuredStackLevel != LevelNone {
-		handler = &stackHandler{inner: h, level: h.structuredStackLevel}
-	}
-	return slog.New(handler).With(slog.String("logger", name))
-}
-
-func (l *Logger) swapHandler(h *multiHandler) {
+func (l *logger) swapHandler(h *multiHandler) {
 	l.handler.Store(h)
-	l.slogger.Store(newSlogLogger(h, l.name))
 }
 
-func (l *Logger) GetLevel() Level {
+func (l *logger) GetLevel() Level {
 	return l.handler.Load().level
 }
 
-// SinkNames returns the names of the sinks attached to this logger.
-func (l *Logger) SinkNames() []string {
-	return l.handler.Load().sinkNames()
+func (l *logger) LevelEnabled(level Level) bool {
+	return l.handler.Load().Enabled(context.Background(), level)
 }
 
-func (l *Logger) LevelEnabled(level Level) bool {
-	return l.handler.Load().Enabled(context.Background(), level)
+// dynamicHandler is the bridge between the stdlib logger and the swappable
+// handler tree: Handle/Enabled always read the current tree, so a stdlib
+// logger handed to a caller (or to a downstream library) stays valid for the
+// process lifetime, across reconfigurations. With-state is replayed onto each
+// tree generation and cached per generation.
+type dynamicHandler struct {
+	l      *logger
+	attrs  []slog.Attr
+	groups []string
+	cache  atomic.Pointer[derivedHandler]
+}
+
+type derivedHandler struct {
+	tree *multiHandler
+	h    slog.Handler
+}
+
+var _ slog.Handler = (*dynamicHandler)(nil)
+
+func (h *dynamicHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.current().Enabled(ctx, level)
+}
+
+func (h *dynamicHandler) Handle(ctx context.Context, r slog.Record) error {
+	tree := h.l.handler.Load()
+	// the stdlib has no stack mechanism: inject the structured field here when
+	// a json/logfmt sink configured a stacktrace level. +1 skips the wrapper
+	// frame of the entry method (slog.(*Logger).Info/…), so the first captured
+	// frame is the caller of the logging call.
+	if lvl := tree.structuredStackLevel; lvl != LevelNone && r.Level >= lvl {
+		r.AddAttrs(slog.String("stacktrace", formatStackFrames(captureStack(4))))
+	}
+	return h.currentFor(tree).Handle(ctx, r)
+}
+
+func (h *dynamicHandler) current() slog.Handler {
+	return h.currentFor(h.l.handler.Load())
+}
+
+func (h *dynamicHandler) currentFor(tree *multiHandler) slog.Handler {
+	if c := h.cache.Load(); c != nil && c.tree == tree {
+		return c.h
+	}
+	var hh slog.Handler = tree
+	for _, g := range h.groups {
+		hh = hh.WithGroup(g)
+	}
+	if len(h.attrs) > 0 {
+		hh = hh.WithAttrs(h.attrs)
+	}
+	h.cache.Store(&derivedHandler{tree: tree, h: hh})
+	return hh
+}
+
+func (h *dynamicHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	n := &dynamicHandler{l: h.l, groups: h.groups}
+	n.attrs = append(slices.Clone(h.attrs), attrs...)
+	return n
+}
+
+func (h *dynamicHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+	n := &dynamicHandler{l: h.l, attrs: h.attrs}
+	n.groups = append(slices.Clone(h.groups), name)
+	return n
 }
 
 // Log logs a printf-style message at the given level. skip is the number of
 // stack frames to skip for caller resolution, 1 meaning the caller of Log.
 //
-// Deprecated: printf-style logging produces no structured output; use Slog() instead.
+// Deprecated: printf-style logging produces no structured output; use the
+// stdlib logger returned by GetLogger instead.
 //
 //go:noinline
-func (l *Logger) Log(skip int, level Level, format string, args ...any) {
+func (l *logger) Log(skip int, level Level, format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(skip+2, pcs[:])
 	l.logPrintf(pcs[0], level, format, args, "", skip+2)
@@ -94,57 +136,57 @@ func (l *Logger) Log(skip int, level Level, format string, args ...any) {
 // frame above the caller of this method.
 //
 //go:noinline
-func (l *Logger) LogPC(pc uintptr, level Level, stackSkip int, format string, args ...any) {
+func (l *logger) LogPC(pc uintptr, level Level, stackSkip int, format string, args ...any) {
 	l.logPrintf(pc, level, format, args, "", stackSkip)
 }
 
-// Deprecated: use Slog().Debug(...) instead.
+// Deprecated: printf-style logging produces no structured output.
 //
 //go:noinline
-func (l *Logger) Trace(format string, args ...any) {
+func (l *logger) Trace(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelTrace, format, args, "", 1)
 }
 
-// Deprecated: use Slog().Debug(...) instead.
+// Deprecated: printf-style logging produces no structured output.
 //
 //go:noinline
-func (l *Logger) Debug(format string, args ...any) {
+func (l *logger) Debug(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelDebug, format, args, "", 1)
 }
 
-// Deprecated: use Slog().Info(...) instead.
-func (l *Logger) Info(format string, args ...any) {
+// Deprecated: printf-style logging produces no structured output.
+func (l *logger) Info(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelInfo, format, args, "", 1)
 }
 
-// Deprecated: use Slog().Warn(...) instead.
+// Deprecated: printf-style logging produces no structured output.
 //
 //go:noinline
-func (l *Logger) Warn(format string, args ...any) {
+func (l *logger) Warn(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelWarn, format, args, "", 1)
 }
 
-// Deprecated: use Slog().Error(...) instead.
+// Deprecated: printf-style logging produces no structured output.
 //
 //go:noinline
-func (l *Logger) Error(format string, args ...any) {
+func (l *logger) Error(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelError, format, args, "", 1)
 }
 
-// Deprecated: use Slog().Error(...) instead.
+// Deprecated: printf-style logging produces no structured output.
 //
 //go:noinline
-func (l *Logger) Critical(format string, args ...any) {
+func (l *logger) Critical(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	l.logPrintf(pcs[0], LevelCritical, format, args, "", 1)
@@ -153,10 +195,10 @@ func (l *Logger) Critical(format string, args ...any) {
 // Fatal logs at FATAL, flushes the manager and exits the process. If no sink
 // accepted the event (before Apply, or level filtered), the message is echoed
 // to stderr so an early fatal is never lost.
-// Deprecated: use Slog().Log(ctx, LevelFatal, ...) plus explicit exit handling instead.
+// Deprecated: handle fatal errors explicitly instead.
 //
 //go:noinline
-func (l *Logger) Fatal(format string, args ...any) {
+func (l *logger) Fatal(format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:]) // 0=Callers, 1=this fn, 2=caller (inline-stable)
 	accepted := l.logPrintf(pcs[0], LevelFatal, format, args, "", 2)
@@ -173,7 +215,7 @@ func (l *Logger) Fatal(format string, args ...any) {
 // (e.g. a route pattern) overriding caller resolution.
 //
 //go:noinline
-func (l *Logger) LogWithCaller(skip int, level Level, caller, format string, args ...any) {
+func (l *logger) LogWithCaller(skip int, level Level, caller, format string, args ...any) {
 	var pcs [1]uintptr
 	runtime.Callers(skip+2, pcs[:])
 	l.logPrintf(pcs[0], level, format, args, caller, skip+2)
@@ -183,7 +225,7 @@ func (l *Logger) LogWithCaller(skip int, level Level, caller, format string, arg
 // PC, for compatibility wrappers whose own frames must not skew attribution.
 //
 //go:noinline
-func (l *Logger) LogWithCallerPC(pc uintptr, level Level, caller string, stackSkip int, format string, args ...any) {
+func (l *logger) LogWithCallerPC(pc uintptr, level Level, caller string, stackSkip int, format string, args ...any) {
 	l.logPrintf(pc, level, format, args, caller, stackSkip)
 }
 
@@ -193,7 +235,7 @@ func (l *Logger) LogWithCallerPC(pc uintptr, level Level, caller string, stackSk
 // positions the stack trace relative to logPrintf. Raw format+args and the
 // stacktrace travel beside the record as *hiddenInfo, never as record attrs.
 // It reports whether any sink accepted the event.
-func (l *Logger) logPrintf(pc uintptr, level Level, format string, args []any, prefillCaller string, stackSkip int) bool {
+func (l *logger) logPrintf(pc uintptr, level Level, format string, args []any, prefillCaller string, stackSkip int) bool {
 	h := l.handler.Load()
 	if !h.Enabled(context.Background(), level) {
 		return false
@@ -248,7 +290,9 @@ func (l *Logger) logPrintf(pc uintptr, level Level, format string, args []any, p
 		if hi == nil {
 			hi = &hiddenInfo{}
 		}
-		hi.stack = captureStack(stackSkip + 1)
+		// +1 for logPrintf, +1 for the entry method (Error/LogPC/…): the first
+		// captured frame is the caller of the logging method
+		hi.stack = captureStack(stackSkip + 2)
 	}
 	if h.needsSource && (hi == nil || hi.caller == "") {
 		if hi == nil {

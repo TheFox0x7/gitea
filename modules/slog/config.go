@@ -44,7 +44,7 @@ type ConnSinkOptions struct {
 // SinkConfig configures one sink. Name deduplicates sinks within one Apply
 // call, so multiple loggers can share one sink; Type is "console", "file" or
 // "conn"; Format defaults to legacy.
-// Level defaults to info, StacktraceLevel (legacy format only) to none.
+// Level defaults to info, StacktraceLevel to none.
 // Colorize must be set explicitly (use CanColorStdout /
 // CanColorStderr for console sinks).
 type SinkConfig struct {
@@ -104,7 +104,7 @@ func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error
 
 // provision validates the configuration and installs it on the manager:
 // sinks are built fresh, the listed loggers' trees are swapped atomically,
-// and sinks no longer referenced by any logger are stopped. Loggers not
+// and sinks no longer referenced by any logger are released. Loggers not
 // listed keep their current configuration.
 func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) error {
 	// validate first, so a bad config doesn't half-apply
@@ -156,7 +156,7 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 		trees[lc.Name] = newMultiHandler(frontends)
 	}
 
-	// phase 2: swap the trees, then stop backends no tree references anymore.
+	// phase 2: swap the trees, then release sinks no tree references anymore.
 	// listed loggers leave the bootstrap buffer; the buffer itself replays
 	// into the freshly configured trees below.
 	oldTrees := make([]*multiHandler, 0, len(trees))
@@ -172,11 +172,11 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 			live[st] = true
 		}
 	}
-	stopped := map[*sinkState]bool{}
+	released := map[*sinkState]bool{}
 	for _, h := range oldTrees {
 		for _, st := range h.sinkStates() {
-			if !live[st] && !stopped[st] {
-				stopped[st] = true
+			if !live[st] && !released[st] {
+				released[st] = true
 				st.releaseWriter()
 			}
 		}

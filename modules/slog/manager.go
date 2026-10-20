@@ -19,9 +19,9 @@ const DefaultName = "default"
 // Config.provision) and tracked via the logger trees.
 type Manager struct {
 	mu      sync.Mutex
-	loggers map[string]*Logger
+	loggers map[string]*logger
 
-	defaultLogger atomic.Pointer[Logger] // fast path for GetLogger(DefaultName)
+	defaultLogger atomic.Pointer[logger] // fast path for GetLogger(DefaultName)
 
 	writers        writerPool
 	bootstrapLevel atomic.Int32 // minimum level captured before a logger is configured
@@ -30,7 +30,7 @@ type Manager struct {
 
 // NewManager creates a new manager.
 func NewManager() *Manager {
-	m := &Manager{loggers: map[string]*Logger{}}
+	m := &Manager{loggers: map[string]*logger{}}
 	m.bootstrapLevel.Store(int32(LevelTrace)) // capture everything pre-configuration by default
 	return m
 }
@@ -47,9 +47,21 @@ func (m *Manager) BootstrapLevel() Level {
 	return Level(m.bootstrapLevel.Load())
 }
 
-// GetLogger returns the logger with the given name, creating an empty one
-// (which discards all output) if it doesn't exist.
-func (m *Manager) GetLogger(name string) *Logger {
+// GetLogger returns the named logger as a stdlib *slog.Logger, creating one
+// (buffering until configured) if it doesn't exist. The returned logger is
+// stable for the process lifetime: it follows reconfigurations (see
+// dynamicHandler), so it can be held and passed to downstream libraries.
+func (m *Manager) GetLogger(name string) *slog.Logger {
+	return m.getLogger(name).stdLogger()
+}
+
+// PrintfLogger returns the transitional printf view of a named logger. It is
+// used only by the modules/log shim until the migration deletes both.
+func (m *Manager) PrintfLogger(name string) *PrintfLogger {
+	return &PrintfLogger{l: m.getLogger(name)}
+}
+
+func (m *Manager) getLogger(name string) *logger {
 	if name == DefaultName {
 		// the default logger is on every package-level log call: check the
 		// atomic cache before taking the mutex
@@ -66,7 +78,7 @@ func (m *Manager) GetLogger(name string) *Logger {
 	return l
 }
 
-func (m *Manager) getLoggerLocked(name string) *Logger {
+func (m *Manager) getLoggerLocked(name string) *logger {
 	if l := m.loggers[name]; l != nil {
 		return l
 	}
@@ -103,16 +115,15 @@ func (m *Manager) RemoveHandler(loggerName string, h slog.Handler) {
 	l.swapHandler(newMultiHandlerChildren(children))
 }
 
-// Close stops all sinks, flushing their queued events (bounded by timeouts),
-// and forgets all loggers. Loggers already held by callers keep working but
-// their events are dropped by the stopped backends.
+// Close releases all writers and forgets all loggers. Loggers already held by
+// callers keep working, but writes to released writers fail and land on stderr.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, st := range m.liveSinkStates() {
 		st.releaseWriter()
 	}
-	m.loggers = map[string]*Logger{}
+	m.loggers = map[string]*logger{}
 	m.defaultLogger.Store(nil)
 	m.buffer = recordBuffer{}
 }
@@ -225,12 +236,25 @@ func GetManager() *Manager {
 	return defaultManager
 }
 
-// GetLogger returns a logger from the default manager.
-func GetLogger(name string) *Logger {
+// GetLogger returns the named logger (a stdlib *slog.Logger) from the default
+// manager.
+func GetLogger(name string) *slog.Logger {
 	return defaultManager.GetLogger(name)
 }
 
 // Default returns the default logger ("default") of the default manager.
-func Default() *Logger {
+func Default() *slog.Logger {
 	return defaultManager.GetLogger(DefaultName)
+}
+
+// GetPrintfLogger returns the transitional printf view used by the modules/log
+// shim. Deprecated: use GetLogger.
+func GetPrintfLogger(name string) *PrintfLogger {
+	return defaultManager.PrintfLogger(name)
+}
+
+// DefaultPrintfLogger returns the transitional printf view of the default
+// logger. Deprecated: use Default.
+func DefaultPrintfLogger() *PrintfLogger {
+	return defaultManager.PrintfLogger(DefaultName)
 }

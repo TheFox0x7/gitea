@@ -31,8 +31,8 @@ func TestSharedFileTarget(t *testing.T) {
 
 	assert.Len(t, m.writers.writers, 1)
 
-	m.GetLogger("one").Info("from one")
-	m.GetLogger("two").Info("from two")
+	m.getLogger("one").Info("from one")
+	m.getLogger("two").Info("from two")
 	m.Close() // the last released reference closes the writer after both backends drained
 
 	assert.Empty(t, m.writers.writers)
@@ -77,7 +77,7 @@ func TestApplyReusesFileWriter(t *testing.T) {
 	w2 := m.writers.writers["file:"+file].w
 	assert.Same(t, w1, w2) // re-apply keeps the open file instead of closing and reopening it
 
-	m.GetLogger("default").Info("kept")
+	m.getLogger("default").Info("kept")
 	m.Close()
 	bs, err := os.ReadFile(file)
 	require.NoError(t, err)

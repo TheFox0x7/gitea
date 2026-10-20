@@ -4,10 +4,13 @@
 package slog
 
 import (
+	"context"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,8 +29,8 @@ func TestBootstrapBufferReplay(t *testing.T) {
 	rec := &testRecorder{}
 
 	// before any Apply: events are captured, not printed, not Fatal-echoed
-	m.GetLogger("default").Info("early one")
-	m.GetLogger("default").Warn("early two %d", 2)
+	m.getLogger("default").Info("early one")
+	m.getLogger("default").Warn("early two %d", 2)
 	assert.Equal(t, "", rec.String())
 
 	// a failed Apply keeps buffering
@@ -39,7 +42,7 @@ func TestBootstrapBufferReplay(t *testing.T) {
 
 	// the successful Apply replays the buffered events into the real sink
 	require.NoError(t, applyConsoleRecorder(m, "default", rec, LevelInfo))
-	m.GetLogger("default").Info("late")
+	m.getLogger("default").Info("late")
 	m.Close()
 
 	assert.Equal(t, "early one\nearly two 2\nlate\n", rec.String())
@@ -51,8 +54,8 @@ func TestBootstrapBufferUnconfiguredLogger(t *testing.T) {
 	t.Cleanup(m.Close)
 	recDefault, recX := &testRecorder{}, &testRecorder{}
 
-	m.GetLogger("default").Info("for default")
-	m.GetLogger("x").Info("for x")
+	m.getLogger("default").Info("for default")
+	m.getLogger("x").Info("for x")
 
 	// only "default" is configured: "x" events stay buffered
 	require.NoError(t, applyConsoleRecorder(m, "default", recDefault, LevelInfo))
@@ -70,8 +73,8 @@ func TestBootstrapBufferLevelGate(t *testing.T) {
 	rec := &testRecorder{}
 
 	m.SetBootstrapLevel(LevelWarn)
-	m.GetLogger("default").Info("below floor")
-	m.GetLogger("default").Warn("above floor")
+	m.getLogger("default").Info("below floor")
+	m.getLogger("default").Warn("above floor")
 	require.NoError(t, applyConsoleRecorder(m, "default", rec, LevelTrace))
 	m.Close()
 	assert.Equal(t, "above floor\n", rec.String())
@@ -92,7 +95,7 @@ func TestBootstrapBufferOverflow(t *testing.T) {
 	rec := &testRecorder{}
 
 	for i := range 5 {
-		m.GetLogger("default").Info("early %d", i)
+		m.getLogger("default").Info("early %d", i)
 	}
 	require.NoError(t, applyConsoleRecorder(m, "default", rec, LevelInfo))
 	m.Close()
@@ -113,8 +116,8 @@ func TestSpillBufferedEvents(t *testing.T) {
 	os.Stderr = w
 
 	m := NewManager()
-	m.GetLogger("default").Info("spilled %s", "event")
-	m.GetLogger("default").Error("spilled error")
+	m.getLogger("default").Info("spilled %s", "event")
+	m.getLogger("default").Error("spilled error")
 	m.SpillBufferedEvents() // default logger never configured: spill to stderr
 
 	require.NoError(t, w.Close())
@@ -130,4 +133,25 @@ func TestSpillBufferedEvents(t *testing.T) {
 
 	// a configured default logger owns its leftovers: nothing spills
 	assert.Empty(t, m.buffer.entries)
+}
+
+func TestBootstrapBufferTreeAttrs(t *testing.T) {
+	m := NewManager()
+	t.Cleanup(m.Close)
+	rec := &testRecorder{}
+
+	// tree-level With-state (e.g. a third party using Handler().WithAttrs)
+	// must survive buffering and replay
+	l := m.getLogger("x")
+	forked := l.handler.Load().WithAttrs([]slog.Attr{slog.String("k", "v")})
+	require.NoError(t, forked.Handle(context.Background(), slog.NewRecord(time.Now(), LevelInfo, "early", 0)))
+
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{{
+		Name:  "x",
+		Sinks: []SinkConfig{{Name: "x-sink", Type: "console", Format: FormatJSON}},
+	}}}, map[string]io.WriteCloser{"x-sink": rec}))
+	m.Close()
+
+	assert.Contains(t, rec.String(), `"k":"v"`)
+	assert.Contains(t, rec.String(), `"msg":"early"`)
 }

@@ -30,7 +30,7 @@ func BenchmarkGateDisabled(b *testing.B) {
 		Name: "bench", Type: "console", Level: LevelWarn,
 	}})
 	defer cleanup()
-	l := Default()
+	l := GetManager().getLogger(DefaultName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("this event is filtered by the level gate")
@@ -44,7 +44,7 @@ func BenchmarkPrintfLegacyColorized(b *testing.B) {
 		Flags: FlagsFromString("stdflags"),
 	}})
 	defer cleanup()
-	l := Default()
+	l := GetManager().getLogger(DefaultName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request %s took %d ms for user %d", "GET /api/v1/repos", 12, 97)
@@ -57,7 +57,7 @@ func BenchmarkPrintfLegacyPlain(b *testing.B) {
 		Flags: FlagsFromString("stdflags"),
 	}})
 	defer cleanup()
-	l := Default()
+	l := GetManager().getLogger(DefaultName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request %s took %d ms for user %d", "GET /api/v1/repos", 12, 97)
@@ -69,7 +69,7 @@ func BenchmarkPrintfJSON(b *testing.B) {
 		Name: "bench", Type: "console", Level: LevelInfo, Format: FormatJSON,
 	}})
 	defer cleanup()
-	l := Default()
+	l := GetManager().getLogger(DefaultName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request %s took %d ms for user %d", "GET /api/v1/repos", 12, 97)
@@ -81,7 +81,7 @@ func BenchmarkStructuredJSON(b *testing.B) {
 		Name: "bench", Type: "console", Level: LevelInfo, Format: FormatJSON,
 	}})
 	defer cleanup()
-	l := Default().Slog()
+	l := Default()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request handled", "method", "GET", "path", "/api/v1/repos", "status", 200)
@@ -95,7 +95,7 @@ func BenchmarkFanout3(b *testing.B) {
 		{Name: "logfmt", Type: "console", Level: LevelInfo, Format: FormatLogfmt},
 	})
 	defer cleanup()
-	l := Default()
+	l := GetManager().getLogger(DefaultName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		l.Info("request %s took %d ms for user %d", "GET /api/v1/repos", 12, 97)
@@ -110,7 +110,7 @@ func BenchmarkLegacyFile(b *testing.B) {
 	require.NoError(b, err)
 	st, err := m.newSinkWithWriter(SinkConfig{Name: "bench", Type: "file", Level: LevelInfo, Flags: FlagsFromString("stdflags")}, f)
 	require.NoError(b, err)
-	l := m.GetLogger("bench")
+	l := m.getLogger("bench")
 	l.swapHandler(newMultiHandler([]*sinkFrontend{newSinkFrontend(st)}))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

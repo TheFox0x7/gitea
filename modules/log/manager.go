@@ -28,7 +28,7 @@ func GetManager() *LoggerManager {
 
 // GetLogger returns a logger with the given name. If the logger doesn't exist, a new empty one will be created.
 func (m *LoggerManager) GetLogger(name string) Logger {
-	return &logger{l: m.mgr.GetLogger(name)}
+	return &logger{p: m.mgr.PrintfLogger(name)}
 }
 
 // Close closes the manager, all loggers and sinks will be closed, the messages are flushed.
@@ -45,7 +45,7 @@ func (m *LoggerManager) DumpLoggers() map[string]any {
 	out := make(map[string]any, len(loggers))
 	for name, ld := range loggers {
 		lm := ld.(map[string]any) //nolint:forcetypeassert // the dump maps are constructed by slog.Manager.Dump
-		level := m.mgr.GetLogger(name).GetLevel()
+		level := m.mgr.PrintfLogger(name).GetLevel()
 		eventWriters := map[string]any{}
 		for _, sn := range lm["sinks"].([]string) { //nolint:forcetypeassert // constructed by slog.Manager.Dump
 			if sd, ok := sinks[sn]; ok {

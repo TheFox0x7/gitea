@@ -204,7 +204,7 @@ func initAllLoggers() {
 	golog.SetFlags(0)
 	golog.SetPrefix("")
 	golog.SetOutput(gologBridge{
-		handler: slog.GetLogger(slog.DefaultName).Slog().Handler(),
+		handler: slog.GetLogger(slog.DefaultName).Handler(),
 		level:   slog.LevelInfo,
 	})
 }
