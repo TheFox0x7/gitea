@@ -96,8 +96,6 @@ func newConnWriterOpener(cfg SinkConfig) connWriterOpener {
 		Protocol:     protocol,
 		DialTimeout:  dialTimeout,
 		WriteTimeout: writeTimeout,
-		// Reconnect/ReconnectOnMsg are intentionally not carried over: they are
-		// ignored no-ops and must not count as divergent writer settings.
 	}}
 }
 
@@ -114,19 +112,8 @@ func (o connWriterOpener) OpenWriter() (io.WriteCloser, error) {
 	}, nil
 }
 
-type registeredWriterOpener struct {
-	cfg SinkConfig
-}
-
-func (o registeredWriterOpener) String() string { return o.WriterKey() }
-
-func (o registeredWriterOpener) WriterKey() string { return "registered:" + o.cfg.Type }
-
-func (o registeredWriterOpener) OpenWriter() (io.WriteCloser, error) {
-	return openRegisteredSink(o.cfg)
-}
-
-// sinkWriterOpener returns the opener describing cfg's destination.
+// sinkWriterOpener returns the opener describing cfg's destination, or nil for
+// an unknown sink type (rejected by Config validation before this is called).
 func sinkWriterOpener(cfg SinkConfig) WriterOpener {
 	switch cfg.Type {
 	case "console":
@@ -144,7 +131,7 @@ func sinkWriterOpener(cfg SinkConfig) WriterOpener {
 	case "conn":
 		return newConnWriterOpener(cfg)
 	default:
-		return registeredWriterOpener{cfg: cfg}
+		return nil
 	}
 }
 
@@ -165,12 +152,8 @@ type pooledWriter struct {
 }
 
 // writerRepr renders an opener's settings for divergence detection. %#v skips
-// the Stringer, so it shows the actual fields; registered openers are opaque
-// factories, so only their type is comparable.
+// the Stringer, so it shows the actual fields.
 func writerRepr(op WriterOpener) string {
-	if o, ok := op.(registeredWriterOpener); ok {
-		return o.WriterKey()
-	}
 	return fmt.Sprintf("%#v", op)
 }
 

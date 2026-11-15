@@ -34,6 +34,7 @@ const maxFailedLineDump = 32 * 1024
 type sinkState struct {
 	name      string
 	sinkType  string
+	discard   bool // drop every record at dispatch; level is forced to LevelNone
 	format    Format
 	writerKey string
 
@@ -73,9 +74,13 @@ func newSinkState(cfg SinkConfig) (*sinkState, error) {
 	}
 	level := new(slog.LevelVar)
 	level.Set(cfg.Level) // zero Level == LevelInfo
+	if cfg.Type == "discard" {
+		level.Set(LevelNone) // a discard sink accepts nothing, so a logger wired only to it reports as disabled
+	}
 	return &sinkState{
 		name:            cfg.Name,
 		sinkType:        cfg.Type,
+		discard:         cfg.Type == "discard",
 		format:          format,
 		level:           level,
 		prefix:          cfg.Prefix,
@@ -160,6 +165,9 @@ func (f *sinkFrontend) enabled(level Level) bool {
 // handle is the internal dispatch; hi travels beside the record and never
 // becomes a record attr
 func (f *sinkFrontend) handle(r slog.Record, hi *hiddenInfo) {
+	if f.st.discard {
+		return
+	}
 	var err error
 	var line []byte
 	switch f.st.format {

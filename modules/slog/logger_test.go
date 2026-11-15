@@ -537,3 +537,57 @@ func TestStackSkip(t *testing.T) {
 	// skip 0 starts at the caller: Stack's own frame must not be included
 	assert.NotContains(t, s, "formatLegacyStack: return")
 }
+
+func TestSetSinkLevelLive(t *testing.T) {
+	m := NewManager()
+	recInfo, recDebug := &testRecorder{}, &testRecorder{}
+	cfg := Config{Loggers: []LoggerConfig{{
+		Name: DefaultName,
+		Sinks: []SinkConfig{
+			{Name: "info-sink", Type: "console", Level: LevelInfo},
+			{Name: "debug-sink", Type: "console", Level: LevelDebug},
+		},
+	}}}
+	require.NoError(t, m.apply(cfg, map[string]io.WriteCloser{
+		"info-sink":  nopWriteCloser{recInfo},
+		"debug-sink": nopWriteCloser{recDebug},
+	}))
+	t.Cleanup(m.Close)
+
+	l := m.PrintfLogger(DefaultName)
+	assert.Equal(t, LevelDebug, l.GetLevel()) // min of the two sinks
+
+	// raising the debug sink to error takes effect immediately, no rebuild
+	require.True(t, m.SetSinkLevel("debug-sink", LevelError))
+	assert.Equal(t, LevelInfo, l.GetLevel())
+	m.GetLogger(DefaultName).Debug("filtered")
+	m.GetLogger(DefaultName).Error("kept")
+	assert.NotContains(t, recDebug.String(), "filtered")
+	assert.Contains(t, recInfo.String(), "kept")
+	assert.NotContains(t, recInfo.String(), "filtered")
+
+	assert.False(t, m.SetSinkLevel("no-such-sink", LevelTrace))
+}
+
+
+func TestDiscardSink(t *testing.T) {
+	m := NewManager()
+	t.Cleanup(m.Close)
+	rec := &testRecorder{}
+	require.NoError(t, m.apply(Config{Loggers: []LoggerConfig{
+		{Name: DefaultName, Sinks: []SinkConfig{
+			{Name: "main", Type: "console", Level: LevelInfo},
+			{Name: "void", Type: SinkTypeDiscard},
+		}},
+		{Name: "router", Sinks: []SinkConfig{{Name: "void2", Type: SinkTypeDiscard}}},
+	}}, map[string]io.WriteCloser{"main": nopWriteCloser{rec}}))
+
+	m.GetLogger(DefaultName).Info("kept")
+	m.GetLogger("router").Error("dropped")
+
+	assert.Contains(t, rec.String(), "kept")
+	assert.NotContains(t, rec.String(), "dropped")
+	// a logger wired only to discard reports as disabled
+	assert.Equal(t, LevelNone, m.PrintfLogger("router").GetLevel())
+	assert.False(t, m.PrintfLogger("router").LevelEnabled(LevelFatal))
+}

@@ -179,7 +179,6 @@ func PrepareIntegrationTestConfig() (workPath string, err error) {
 	_, sshPort, _ := net.SplitHostPort(sshListener.Addr().String())
 	envVarMap := map[string]string{
 		"TEST_WORK_PATH": workPath,
-		"TEST_LOGGER":    "test,file",
 		"TEST_HTTP_PORT": httpPort,
 		"TEST_SSH_PORT":  sshPort,
 	}

@@ -41,8 +41,17 @@ func (l *logger) swapHandler(h *multiHandler) {
 	l.handler.Store(h)
 }
 
+// GetLevel returns the lowest sink level of the logger's current tree,
+// computed live so runtime SetSinkLevel changes are reflected; LevelNone when
+// the logger has no sinks (still buffering).
 func (l *logger) GetLevel() Level {
-	return l.handler.Load().level
+	level := LevelNone
+	for _, st := range l.handler.Load().sinkStates() {
+		if lv := st.level.Level(); lv < level {
+			level = lv
+		}
+	}
+	return level
 }
 
 func (l *logger) LevelEnabled(level Level) bool {
@@ -247,12 +256,12 @@ func (l *logger) logPrintf(pc uintptr, level Level, format string, args []any, p
 	for i, v := range args {
 		var nv any
 		if cv, ok := v.(*ColoredValue); ok {
+			// wrap LogStringer inside ColoredValue without mutating the
+			// caller's value: replace with a fresh ColoredValue
 			if ls := asLogStringer(cv.v); ls != nil {
-				cv.v = logStringFormatter{v: ls} // mutate through the pointer
+				nv = NewColoredValue(logStringFormatter{v: ls}, cv.colors...)
 			}
-			continue
-		}
-		if ls := asLogStringer(v); ls != nil {
+		} else if ls := asLogStringer(v); ls != nil {
 			nv = logStringFormatter{v: ls}
 		} else if s, ok := v.(string); ok {
 			if masked, changed := protectSensitiveInfo(s); changed {

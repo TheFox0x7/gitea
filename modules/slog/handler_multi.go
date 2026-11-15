@@ -33,7 +33,6 @@ type multiHandler struct {
 	needsMessage         bool  // some sink renders Record.Message (not colorized legacy)
 	stacktraceLevel      Level // minimum StacktraceLevel over all sinks; LevelNone if none
 	structuredStackLevel Level // minimum StacktraceLevel over json/logfmt sinks, for the stdlib path
-	level                Level // lowest sink level, for GetLevel; LevelNone if no sinks
 	buffering            bool  // some child is a bootstrap bufferChild
 }
 
@@ -52,7 +51,6 @@ func newMultiHandlerChildren(children []child) *multiHandler {
 		children:             slices.Clone(children),
 		stacktraceLevel:      LevelNone,
 		structuredStackLevel: LevelNone,
-		level:                LevelNone,
 	}
 	for _, c := range h.children {
 		if _, ok := c.(bufferChild); ok {
@@ -72,6 +70,9 @@ func newMultiHandlerChildren(children []child) *multiHandler {
 			continue
 		}
 		for _, st := range states {
+			if st.discard {
+				continue // accepts nothing, renders nothing
+			}
 			if st.needsSource() {
 				h.needsSource = true
 			}
@@ -85,9 +86,6 @@ func newMultiHandlerChildren(children []child) *multiHandler {
 			}
 			if (st.format == FormatJSON || st.format == FormatLogfmt) && st.stacktraceLevel < h.structuredStackLevel {
 				h.structuredStackLevel = st.stacktraceLevel
-			}
-			if st.level.Level() < h.level {
-				h.level = st.level.Level()
 			}
 		}
 	}
@@ -114,6 +112,20 @@ func (h *multiHandler) Handle(_ context.Context, r slog.Record) error {
 // never need to strip anything from it
 func (h *multiHandler) handle(r slog.Record, hi *hiddenInfo) {
 	for _, f := range h.children {
+		if f.enabled(r.Level) {
+			f.handle(r, hi)
+		}
+	}
+}
+
+// handleReplay dispatches a buffered pre-configuration event. External
+// handlers are skipped: attached before the Apply they already received the
+// event live, so replaying it to them would duplicate it.
+func (h *multiHandler) handleReplay(r slog.Record, hi *hiddenInfo) {
+	for _, f := range h.children {
+		if _, ok := f.(handlerChild); ok {
+			continue
+		}
 		if f.enabled(r.Level) {
 			f.handle(r, hi)
 		}

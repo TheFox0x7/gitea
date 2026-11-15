@@ -6,7 +6,7 @@ package testlogger
 import (
 	"context"
 	"fmt"
-	"io"
+	stdslog "log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -151,8 +151,17 @@ func PrintCurrentTest(t testing.TB, skip ...int) func() {
 	}
 }
 
-// Init registers the "test" sink type, which writes formatted log lines to
-// the testing framework's log via WriterCloser.
+// Handler returns an slog.Handler that writes log records to the currently
+// running test via WriterCloser. Attach it with slog.GetManager().AddHandler
+// (see Init); it is not a config sink type.
+func Handler() stdslog.Handler {
+	return stdslog.NewTextHandler(WriterCloser, &stdslog.HandlerOptions{Level: slog.LevelTrace})
+}
+
+// Init attaches the test handler to the default logger, so integration test
+// logs are attributed to the running test. It is safe to call before the
+// logging configuration is applied: the handler survives reconfiguration and
+// receives pre-configuration events exactly once.
 func Init() {
 	const relFilePath = "modules/testlogger/testlogger.go"
 	_, filename, _, _ := runtime.Caller(0)
@@ -161,9 +170,7 @@ func Init() {
 	}
 	prefix = strings.TrimSuffix(filename, relFilePath)
 
-	slog.RegisterSinkType("test", func(slog.SinkConfig) (io.WriteCloser, error) {
-		return WriterCloser, nil
-	})
+	slog.GetManager().AddHandler(slog.DefaultName, Handler())
 }
 
 // MainErrorf is used to report an error from TestMain and return a non-zero value to indicate the failure

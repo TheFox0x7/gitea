@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// SinkTypeDiscard is the built-in sink type that drops every record (the
+// sink-level equivalent of slog.DiscardHandler).
+const SinkTypeDiscard = "discard"
+
 // ConsoleSinkOptions configures a console sink.
 type ConsoleSinkOptions struct {
 	Stderr bool
@@ -29,16 +33,13 @@ type FileSinkOptions struct {
 
 // ConnSinkOptions configures a network sink. DialTimeout defaults to 30s and
 // WriteTimeout to 60s (TCP only); zero means "use the default", and a negative
-// value disables the deadline. Reconnect/ReconnectOnMsg are accepted for
-// config compatibility but unused: reconnection is always automatic and
+// value disables the deadline. Reconnection is always automatic and
 // rate-limited (see connWriter).
 type ConnSinkOptions struct {
-	Addr           string
-	Protocol       string // tcp (default), udp, unix
-	Reconnect      bool
-	ReconnectOnMsg bool
-	DialTimeout    time.Duration
-	WriteTimeout   time.Duration
+	Addr         string
+	Protocol     string // tcp (default), udp, unix
+	DialTimeout  time.Duration
+	WriteTimeout time.Duration
 }
 
 // SinkConfig configures one sink. Name deduplicates sinks within one Apply
@@ -92,6 +93,18 @@ func StderrConfig(loggerName string, level Level) Config {
 	}}}
 }
 
+// withPreservedHandlers returns newTree with the external handlers (AddHandler)
+// of oldTree carried over: they are not sinks and must survive reconfiguration.
+func withPreservedHandlers(oldTree, newTree *multiHandler) *multiHandler {
+	children := make([]child, 0, len(oldTree.children)+len(newTree.children))
+	for _, c := range oldTree.children {
+		if _, ok := c.(handlerChild); ok {
+			children = append(children, c)
+		}
+	}
+	return newMultiHandlerChildren(append(children, newTree.children...))
+}
+
 // Apply validates and installs the configuration on the manager.
 func (m *Manager) Apply(cfg Config) error {
 	return cfg.provision(m, nil)
@@ -105,7 +118,7 @@ func (m *Manager) apply(cfg Config, sinkWriters map[string]io.WriteCloser) error
 // provision validates the configuration and installs it on the manager:
 // sinks are built fresh, the listed loggers' trees are swapped atomically,
 // and sinks no longer referenced by any logger are released. Loggers not
-// listed keep their current configuration.
+// listed keep their current configuration (unconfigured ones keep buffering).
 func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) error {
 	// validate first, so a bad config doesn't half-apply
 	for _, lc := range cfg.Loggers {
@@ -114,11 +127,9 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 				return fmt.Errorf("log logger %q has a sink with empty name", lc.Name)
 			}
 			switch sc.Type {
-			case "console", "file", "conn":
+			case "console", "file", "conn", "discard":
 			default:
-				if !hasSinkType(sc.Type) {
-					return fmt.Errorf("invalid log sink type %q for sink %q", sc.Type, sc.Name)
-				}
+				return fmt.Errorf("invalid log sink type %q for sink %q", sc.Type, sc.Name)
 			}
 			if sc.Format != "" && sc.Format != FormatLegacy && sc.Format != FormatLogfmt && sc.Format != FormatJSON && sc.Format != FormatCLF {
 				return fmt.Errorf("invalid log sink format %q for sink %q", sc.Format, sc.Name)
@@ -158,13 +169,15 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 
 	// phase 2: swap the trees, then release sinks no tree references anymore.
 	// listed loggers leave the bootstrap buffer; the buffer itself replays
-	// into the freshly configured trees below.
+	// into the freshly configured trees below. Externally attached handlers
+	// (AddHandler) are not sinks: they survive the reconfiguration.
 	oldTrees := make([]*multiHandler, 0, len(trees))
 	for _, lc := range cfg.Loggers {
 		l := m.getLoggerLocked(lc.Name)
-		oldTrees = append(oldTrees, l.handler.Load())
+		old := l.handler.Load()
+		oldTrees = append(oldTrees, old)
 		l.configured.Store(true)
-		l.swapHandler(trees[lc.Name])
+		l.swapHandler(withPreservedHandlers(old, trees[lc.Name]))
 	}
 	live := map[*sinkState]bool{}
 	for _, l := range m.loggers {
@@ -186,7 +199,20 @@ func (cfg *Config) provision(m *Manager, sinkWriters map[string]io.WriteCloser) 
 }
 
 func (m *Manager) newSink(cfg SinkConfig) (*sinkState, error) {
+	if cfg.Type == "discard" {
+		// no writer, no pool entry: records are dropped at dispatch
+		st, err := newSinkState(cfg)
+		if err != nil {
+			return nil, err
+		}
+		st.writer = nopWriteCloser{io.Discard}
+		st.release = func() {}
+		return st, nil
+	}
 	op := sinkWriterOpener(cfg)
+	if op == nil {
+		return nil, fmt.Errorf("invalid log sink type %q for sink %q", cfg.Type, cfg.Name)
+	}
 	w, release, err := m.writers.acquire(op)
 	if err != nil {
 		return nil, err

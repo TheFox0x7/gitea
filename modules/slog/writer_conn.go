@@ -4,6 +4,7 @@
 package slog
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -13,6 +14,10 @@ import (
 // connRedialInterval caps reconnect attempts so a down remote cannot turn
 // every log emission into a blocking dial (the pathology of Caddy #4111).
 var connRedialInterval = 10 * time.Second
+
+// errConnDown is returned when a write cannot even attempt a connection
+// because a recent dial failed and the redial window has not passed yet.
+var errConnDown = errors.New("log connection is down")
 
 // connWriter is a port of Caddy's redialerConn: a failed write retries once
 // (a concurrent writer may have reconnected already), redials are
@@ -29,7 +34,6 @@ type connWriter struct {
 	writeTimeout time.Duration
 
 	lastRedial time.Time
-	lastError  error
 }
 
 var _ io.WriteCloser = (*connWriter)(nil)
@@ -49,9 +53,12 @@ func (c *connWriter) Write(p []byte) (int, error) {
 	c.connMu.RLock()
 	conn := c.innerWriter
 	c.connMu.RUnlock()
+	var lastErr error
 	if conn != nil {
 		if n, err := c.writeConn(conn, p); err == nil {
 			return n, nil
+		} else {
+			lastErr = err
 		}
 	}
 
@@ -61,6 +68,8 @@ func (c *connWriter) Write(p []byte) (int, error) {
 	if c.innerWriter != nil {
 		if n, err := c.writeConn(c.innerWriter, p); err == nil {
 			return n, nil
+		} else {
+			lastErr = err
 		}
 	}
 	if time.Since(c.lastRedial) >= connRedialInterval {
@@ -72,18 +81,18 @@ func (c *connWriter) Write(p []byte) (int, error) {
 			c.innerWriter = conn
 			return c.writeConn(conn, p)
 		}
+		lastErr = err
 	}
-	return 0, c.lastError
+	if lastErr == nil {
+		lastErr = errConnDown
+	}
+	return 0, lastErr
 }
 
+// dial must be called with connMu held for writing.
 func (c *connWriter) dial() (net.Conn, error) {
 	c.lastRedial = time.Now()
-	conn, err := net.DialTimeout(c.protocol, c.addr, c.dialTimeout)
-	if err != nil {
-		c.lastError = err
-		return nil, err
-	}
-	return conn, nil
+	return net.DialTimeout(c.protocol, c.addr, c.dialTimeout)
 }
 
 func (c *connWriter) writeConn(conn net.Conn, p []byte) (int, error) {
@@ -92,9 +101,5 @@ func (c *connWriter) writeConn(conn net.Conn, p []byte) (int, error) {
 			_ = tcpConn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 		}
 	}
-	n, err := conn.Write(p)
-	if err != nil {
-		c.lastError = err
-	}
-	return n, err
+	return conn.Write(p)
 }

@@ -29,7 +29,7 @@ func TestConnWriterRedial(t *testing.T) {
 	require.Error(t, err) // nothing listens: the dial fails and the error surfaces
 	_, err = w.Write([]byte("second\n"))
 	require.Error(t, err)
-	assert.Same(t, err, w.lastError) // rate-limited: the retry reused the first dial's error
+	assert.ErrorIs(t, err, errConnDown) // rate-limited: no second dial attempted
 
 	// the remote comes back: writes succeed again once the redial window passed
 	ln2, err := net.Listen("tcp", addr)

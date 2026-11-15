@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gitea.dev/modules/json"
 	"gitea.dev/modules/slog"
@@ -351,4 +352,213 @@ STACKTRACE_LEVEL = error
 	check := loggerDumpJSON(t, manager, "xorm")
 	assert.Contains(t, check, `"addSource": true`)
 	assert.Contains(t, check, `"stacktraceLevel": "error"`)
+}
+
+func loadLogSlogConfigFromData(t *testing.T, config string) (slog.Config, error) {
+	t.Helper()
+	oldLogConfig := Log
+	Log = LogGlobalConfig{}
+	t.Cleanup(func() { Log = oldLogConfig })
+
+	cfg, err := NewConfigProviderFromData(config)
+	require.NoError(t, err)
+	loadLogGlobalFrom(cfg)
+	return loadLogSlogConfig(cfg)
+}
+
+func loggerSinkNames(c slog.Config, name string) []string {
+	for _, lc := range c.Loggers {
+		if lc.Name == name {
+			names := make([]string, 0, len(lc.Sinks))
+			for _, sc := range lc.Sinks {
+				names = append(names, sc.Name)
+			}
+			return names
+		}
+	}
+	return nil
+}
+
+func configSinks(c slog.Config) map[string]slog.SinkConfig {
+	sinks := map[string]slog.SinkConfig{}
+	for _, lc := range c.Loggers {
+		for _, sc := range lc.Sinks {
+			sinks[sc.Name] = sc
+		}
+	}
+	return sinks
+}
+
+func TestLogConfigSinksDefault(t *testing.T) {
+	c, err := loadLogSlogConfigFromData(t, `
+[log.sinks.console]
+TYPE = console
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "default"))
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "router"))
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "xorm"))
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "ssh"))
+	assert.Nil(t, loggerSinkNames(c, "access")) // disabled unless wired
+
+	sc := configSinks(c)["console"]
+	assert.Equal(t, "console", sc.Type)
+	assert.Equal(t, slog.FormatLegacy, sc.Format)
+	assert.Equal(t, slog.LevelInfo, sc.Level)
+	assert.Equal(t, slog.LevelNone, sc.StacktraceLevel)
+	assert.NotNil(t, sc.Console)
+	assert.False(t, sc.Console.Stderr)
+}
+
+func TestLogConfigSinksWiring(t *testing.T) {
+	tempDir := t.TempDir()
+
+	c, err := loadLogSlogConfigFromData(t, `
+[log]
+ROOT_PATH = `+tempDir+`
+LEVEL = warn
+ENABLE_SSH_LOG = false
+
+[log.sinks.console]
+TYPE = console
+STDERR = true
+FORMAT = json
+WITH_CALLER = true
+
+[log.sinks.logs]
+TYPE = file
+FILE_NAME = gitea.log
+MAX_SIZE = 1GiB
+LEVEL = debug
+
+[log.sinks.access]
+TYPE = file
+FILE_NAME = access.log
+FORMAT = clf
+FLAGS = none
+
+[log.loggers]
+default = console, logs
+access = access
+router =
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"console", "logs"}, loggerSinkNames(c, "default"))
+	assert.Equal(t, []string{"access"}, loggerSinkNames(c, "access"))
+	assert.Nil(t, loggerSinkNames(c, "router"))                              // disabled
+	assert.Equal(t, []string{"console", "logs"}, loggerSinkNames(c, "xorm")) // follows default
+	assert.Nil(t, loggerSinkNames(c, "ssh"))                                 // ENABLE_SSH_LOG = false
+
+	sinks := configSinks(c)
+	console := sinks["console"]
+	assert.Equal(t, slog.FormatJSON, console.Format)
+	assert.Equal(t, slog.LevelWarn, console.Level) // inherits [log] LEVEL
+	assert.True(t, console.AddSource)
+	assert.True(t, console.Console.Stderr)
+
+	file := sinks["logs"]
+	assert.Equal(t, int64(1<<30), file.File.MaxSize)
+	assert.Equal(t, slog.LevelDebug, file.Level)
+	assert.Equal(t, filepath.Join(tempDir, "gitea.log"), file.File.FileName)
+
+	access := sinks["access"]
+	assert.Equal(t, slog.FormatCLF, access.Format)
+	assert.Equal(t, uint32(0), access.Flags.Bits()) // "none"
+	assert.Equal(t, filepath.Join(tempDir, "access.log"), access.File.FileName)
+}
+
+func TestLogConfigSinksConn(t *testing.T) {
+	c, err := loadLogSlogConfigFromData(t, `
+[log.sinks.remote]
+TYPE = conn
+ADDR = example.com:7020
+PROTOCOL = udp
+DIAL_TIMEOUT = 5s
+`)
+	require.NoError(t, err)
+	sc := configSinks(c)["remote"]
+	require.NotNil(t, sc.Conn)
+	assert.Equal(t, "udp", sc.Conn.Protocol)
+	assert.Equal(t, "example.com:7020", sc.Conn.Addr)
+	assert.Equal(t, 5*time.Second, sc.Conn.DialTimeout)
+	assert.Equal(t, 60*time.Second, sc.Conn.WriteTimeout) // default
+}
+
+func TestLogConfigSinksErrors(t *testing.T) {
+	// wiring without any sink definition
+	_, err := loadLogSlogConfigFromData(t, `
+[log.loggers]
+default = console
+`)
+	require.Error(t, err)
+
+	// reference to an undefined sink
+	_, err = loadLogSlogConfigFromData(t, `
+[log.sinks.console]
+TYPE = console
+
+[log.loggers]
+default = console, nope
+`)
+	require.ErrorContains(t, err, "undefined sink")
+
+	// invalid sink type
+	_, err = loadLogSlogConfigFromData(t, `
+[log.sinks.bad]
+TYPE = carrier-pigeon
+`)
+	require.ErrorContains(t, err, "invalid TYPE")
+
+	// invalid MAX_SIZE
+	_, err = loadLogSlogConfigFromData(t, `
+[log.sinks.file]
+TYPE = file
+MAX_SIZE = lots
+`)
+	require.ErrorContains(t, err, "invalid MAX_SIZE")
+}
+
+func TestLogConfigSinksArbitraryLogger(t *testing.T) {
+	// any logger name can be wired, not just the known components
+	c, err := loadLogSlogConfigFromData(t, `
+[log.sinks.console]
+TYPE = console
+
+[log.loggers]
+git = console
+router =
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "git"))
+	assert.Nil(t, loggerSinkNames(c, "router"))
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "default")) // all sinks
+}
+
+func TestLogConfigSinksDiscard(t *testing.T) {
+	// the built-in "discard" sink needs no [log.sinks.discard] section
+	c, err := loadLogSlogConfigFromData(t, `
+[log.sinks.console]
+TYPE = console
+
+[log.loggers]
+default = console
+router = discard
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"console"}, loggerSinkNames(c, "default"))
+	router := loggerSinkNames(c, "router")
+	require.Equal(t, []string{"discard"}, router)
+	sinks := configSinks(c)
+	assert.Equal(t, slog.SinkTypeDiscard, sinks["discard"].Type)
+
+	// and as an explicit sink type
+	c, err = loadLogSlogConfigFromData(t, `
+[log.sinks.void]
+TYPE = discard
+
+[log.loggers]
+default = void
+`)
+	require.NoError(t, err)
+	assert.Equal(t, slog.SinkTypeDiscard, configSinks(c)["void"].Type)
 }

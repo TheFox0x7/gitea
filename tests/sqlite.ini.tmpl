@@ -66,16 +66,15 @@ NO_REPLY_ADDRESS                  = noreply.example.org
 PROVIDER = file
 
 [log]
-MODE                 = {{TEST_LOGGER}}
 ENABLE_SSH_LOG       = true
-logger.xorm.MODE     = file
 
-[log.test]
-LEVEL                = Info
-COLORIZE             = true
-
-[log.file]
+[log.sinks.file]
+TYPE                 = file
 LEVEL                = Debug
+
+[log.loggers]
+default              = file
+xorm                 = file
 
 [security]
 INSTALL_LOCK   = true

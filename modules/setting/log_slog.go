@@ -19,7 +19,7 @@ type gologBridge struct {
 
 func (b gologBridge) Write(p []byte) (int, error) {
 	var pcs [1]uintptr
-	runtime.Callers(3, pcs[:]) // Callers, Write, golog Output → golog caller
+	runtime.Callers(4, pcs[:]) // Callers, Write, golog Output, golog Print → caller
 	r := slog.NewRecord(time.Now(), b.level, string(p), pcs[0])
 	_ = b.handler.Handle(context.Background(), r)
 	return len(p), nil

@@ -147,7 +147,7 @@ func (m *Manager) flushBufferLocked() {
 		if len(e.attrs) > 0 {
 			h = h.withAttrs(e.attrs)
 		}
-		h.handle(e.rec, e.hi)
+		h.handleReplay(e.rec, e.hi)
 	}
 	m.buffer.restore(requeue)
 	if dropped > 0 {
@@ -189,6 +189,22 @@ func (m *Manager) liveSinkStates() []*sinkState {
 		}
 	}
 	return sts
+}
+
+// SetSinkLevel changes the level of a named sink at runtime. Every logger
+// wired to the sink follows immediately: the level is a slog.LevelVar read
+// per record, so no tree rebuild is needed. Returns false if no such sink.
+func (m *Manager) SetSinkLevel(name string, level Level) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	found := false
+	for _, st := range m.liveSinkStates() {
+		if st.name == name {
+			st.level.Set(level)
+			found = true
+		}
+	}
+	return found
 }
 
 // Dump returns the state of all loggers and sinks, for debugging and display.
