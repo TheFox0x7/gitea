@@ -569,7 +569,6 @@ func TestSetSinkLevelLive(t *testing.T) {
 	assert.False(t, m.SetSinkLevel("no-such-sink", LevelTrace))
 }
 
-
 func TestDiscardSink(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Close)
